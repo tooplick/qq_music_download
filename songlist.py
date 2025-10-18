@@ -125,7 +125,7 @@ class OthersSonglistDownloader:
     async def extract_song_info(self, song_data: Dict[str, Any]) -> Dict[str, Any]:
         """从歌曲数据中提取所需信息"""
         # 获取歌曲名称
-        song_name = song_data.get('name', '未知歌曲')
+        song_name = song_data.get('title', '未知歌曲')
 
         # 获取歌手信息
         singer_info = song_data.get('singer', [])

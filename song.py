@@ -45,7 +45,7 @@ async def search_song() -> dict:
 
     print("\n搜索结果如下：")
     for idx, song in enumerate(results, start=1):
-        name = song["name"]
+        name = song["title"]
         singers = ", ".join([s["name"] for s in song["singer"]])
         # 判断是否为 VIP 歌曲
         vip_flag = song.get("pay", {}).get("pay_play", 0) != 0
