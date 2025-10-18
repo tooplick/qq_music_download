@@ -312,8 +312,8 @@ class OthersSonglistDownloader:
 
     async def interactive_download(self):
         """交互式下载界面"""
-        print("QQ音乐歌单下载器")
-        print("版本号:v2.0.1")
+        print("QQ音乐歌单下载")
+        print("版本号:v2.0.2")
         print("-" * 50)
 
         # 加载凭证
