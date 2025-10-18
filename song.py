@@ -62,7 +62,7 @@ async def search_song() -> dict:
 
     song_info = results[choice - 1]
     vip_flag = song_info.get("pay", {}).get("pay_play", 0) != 0
-    print(f"\n你选择了: {song_info['name']} - {song_info['singer'][0]['name']}{' [VIP]' if vip_flag else ''}")
+    print(f"\n你选择了: {song_info['title']} - {song_info['singer'][0]['name']}{' [VIP]' if vip_flag else ''}")
 
     return song_info
 
@@ -74,7 +74,7 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
         print("这首歌是VIP歌曲，需要登录才能下载高音质版本")
 
     mid = song_info['mid']
-    song_name = song_info['name']
+    song_name = song_info['title']
     singer_name = song_info['singer'][0]['name']
 
     # 根据音质偏好设置下载策略
