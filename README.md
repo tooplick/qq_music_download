@@ -61,8 +61,8 @@ python songlist.py
 - `signin.py` - 登录脚本
 - `requirements.txt` - 项目依赖
 - `qqmusic_cred.pkl` - 登录凭证（自动生成）
-- `music/` - 下载的音乐文件目录
 - `dist.zip` - 打包好的Windows版本
+- `music/` - 下载的音乐文件目录
 
 ## 音质说明
 
