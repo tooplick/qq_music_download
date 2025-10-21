@@ -6,6 +6,7 @@ from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
 import aiohttp
 
+
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
 MUSIC_DIR = Path("./music")
 MUSIC_DIR.mkdir(exist_ok=True)
@@ -70,7 +71,7 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
     """下载歌曲，根据音质偏好进行降级下载"""
     vip = song_info.get('pay', {}).get('pay_play', 0) != 0
     if vip and not credential:
-        print("这首歌是VIP歌曲，需要登录")
+        print("这首歌是VIP歌曲，需要登录才能下载高音质版本")
 
     mid = song_info['mid']
     song_name = song_info['title']
@@ -150,11 +151,14 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
 
 
 async def main():
+    print("QQ音乐单曲下载器")
+    print("版本号:v2.0.2")
+    print("-" * 50)
     # 尝试加载本地凭证
     credential = await load_credential()
 
     # 询问音质偏好
-    print("\n" + "=" * 50)
+    print("-" * 50)
     flac_choice = input("你希望更高音质吗？(y/n): ").strip().lower()
 
     if flac_choice == 'y':

@@ -312,7 +312,7 @@ class OthersSonglistDownloader:
 
     async def interactive_download(self):
         """交互式下载界面"""
-        print("QQ音乐歌单下载")
+        print("QQ音乐歌单下载器")
         print("版本号:v2.0.2")
         print("-" * 50)
 
@@ -328,7 +328,7 @@ class OthersSonglistDownloader:
         while True:
             try:
                 # 输入目标用户musicid
-                print("\n" + "-" * 30)
+                print("-" * 50)
                 target_musicid = input("请输入你的musicid (输入'q'退出): ").strip()
 
                 if target_musicid.lower() == 'q':
@@ -340,7 +340,6 @@ class OthersSonglistDownloader:
                     continue
 
                 # 询问音质偏好
-                print("\n" + "-" * 30)
                 flac_choice = input("你希望更高音质吗？(y/n): ").strip().lower()
 
                 if flac_choice == 'y':
