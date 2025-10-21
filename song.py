@@ -4,9 +4,7 @@ from pathlib import Path
 from qqmusic_api import search
 from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
-from qqmusic_api.user import get_vip_info
 import aiohttp
-import os
 
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
 MUSIC_DIR = Path("./music")
@@ -16,6 +14,7 @@ MUSIC_DIR.mkdir(exist_ok=True)
 async def load_credential() -> Credential | None:
     """加载本地凭证，如果不存在或过期返回 None"""
     if not CREDENTIAL_FILE.exists():
+        print("本地无凭证文件，仅能下载免费歌曲")
         return None
     try:
         with CREDENTIAL_FILE.open("rb") as f:
@@ -71,7 +70,7 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
     """下载歌曲，根据音质偏好进行降级下载"""
     vip = song_info.get('pay', {}).get('pay_play', 0) != 0
     if vip and not credential:
-        print("这首歌是VIP歌曲，需要登录才能下载高音质版本")
+        print("这首歌是VIP歌曲，需要登录")
 
     mid = song_info['mid']
     song_name = song_info['title']
