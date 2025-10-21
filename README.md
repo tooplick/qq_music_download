@@ -49,16 +49,16 @@ python song.py
 python songlist.py
 ```
 按照提示：
-1. 输入目标用户的musicid
+1. 输入用户的musicid
 2. 选择音质偏好
 3. 从歌单列表中选择要下载的歌单
 4. 预览歌曲列表并确认下载
 
 ## 文件说明
 
-- `song.py` - 单曲搜索下载脚本
-- `songlist.py` - 歌单下载脚本
-- `signin.py` - 登录脚本
+- `song.py` - 单曲搜索下载
+- `songlist.py` - 歌单下载
+- `signin.py` - 登录
 - `requirements.txt` - 项目依赖
 - `qqmusic_cred.pkl` - 登录凭证（自动生成）
 - `dist.zip` - 打包好的Windows版本
