@@ -51,8 +51,8 @@ class OthersSonglistDownloader:
         if self.session:
             await self.session.close()
 
-    async def load_credential(self) -> Optional[Credential]:
-        """加载本地登录凭证"""
+    async def load_and_refresh_credential(self) -> Optional[Credential]:
+        """加载本地登录凭证，如果过期则自动刷新"""
         if not CREDENTIAL_FILE.exists():
             return None
 
@@ -60,12 +60,31 @@ class OthersSonglistDownloader:
             with CREDENTIAL_FILE.open("rb") as f:
                 cred: Credential = pickle.load(f)
 
-            if await check_expired(cred):
-                print("登录凭证已过期，请重新登录")
-                return None
+            # 检查是否过期
+            is_expired = await check_expired(cred)
 
-            print("使用本地凭证登录成功!")
-            return cred
+            if is_expired:
+                print("登录凭证已过期，尝试自动刷新...")
+
+                # 检查是否可以刷新
+                can_refresh = await cred.can_refresh()
+                if can_refresh:
+                    try:
+                        await cred.refresh()
+                        # 保存刷新后的凭证
+                        with CREDENTIAL_FILE.open("wb") as f:
+                            pickle.dump(cred, f)
+                        print("凭证自动刷新成功!")
+                        return cred
+                    except Exception as refresh_error:
+                        print(f"凭证自动刷新失败: {refresh_error}")
+                        return None
+                else:
+                    print("凭证不支持刷新，无法继续")
+                    return None
+            else:
+                print("使用本地凭证登录成功!")
+                return cred
 
         except Exception as e:
             print(f"加载凭证失败: {e}")
@@ -313,11 +332,11 @@ class OthersSonglistDownloader:
     async def interactive_download(self):
         """交互式下载界面"""
         print("QQ音乐歌单下载器")
-        print("版本号:v2.0.2")
+        print("版本号:v2.0.3")
         print("-" * 50)
 
-        # 加载凭证
-        self.credential = await self.load_credential()
+        # 加载凭证（包含自动刷新功能）
+        self.credential = await self.load_and_refresh_credential()
 
         # 如果没有凭证，直接提示并退出
         if not self.credential:

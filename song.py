@@ -6,27 +6,50 @@ from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
 import aiohttp
 
-
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
 MUSIC_DIR = Path("./music")
 MUSIC_DIR.mkdir(exist_ok=True)
 
 
-async def load_credential() -> Credential | None:
-    """加载本地凭证，如果不存在或过期返回 None"""
+async def load_and_refresh_credential() -> Credential | None:
+    """加载本地凭证，如果过期则自动刷新"""
     if not CREDENTIAL_FILE.exists():
         print("本地无凭证文件，仅能下载免费歌曲")
         return None
+
     try:
         with CREDENTIAL_FILE.open("rb") as f:
             cred: Credential = pickle.load(f)
-        if await check_expired(cred):
-            print("本地凭证已过期，将以未登录方式下载")
-            return None
-        print(f"使用本地凭证登录成功! ")
-        return cred
-    except Exception:
-        print("加载凭证失败，将以未登录方式下载")
+
+        # 检查是否过期
+        is_expired = await check_expired(cred)
+
+        if is_expired:
+            print("本地凭证已过期，尝试自动刷新...")
+
+            # 检查是否可以刷新
+            can_refresh = await cred.can_refresh()
+            if can_refresh:
+                try:
+                    await cred.refresh()
+                    # 保存刷新后的凭证
+                    with CREDENTIAL_FILE.open("wb") as f:
+                        pickle.dump(cred, f)
+                    print("凭证自动刷新成功!")
+                    return cred
+                except Exception as refresh_error:
+                    print(f"凭证自动刷新失败: {refresh_error}")
+                    print("将以未登录方式下载")
+                    return None
+            else:
+                print("凭证不支持刷新，将以未登录方式下载")
+                return None
+        else:
+            print(f"使用本地凭证登录成功!")
+            return cred
+
+    except Exception as e:
+        print(f"加载凭证失败: {e}，将以未登录方式下载")
         return None
 
 
@@ -152,10 +175,10 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
 
 async def main():
     print("QQ音乐单曲下载器")
-    print("版本号:v2.0.2")
+    print("版本号:v2.0.3")
     print("-" * 50)
-    # 尝试加载本地凭证
-    credential = await load_credential()
+    # 尝试加载本地凭证（包含自动刷新功能）
+    credential = await load_and_refresh_credential()
 
     # 询问音质偏好
     print("-" * 50)
