@@ -16,7 +16,16 @@
 - Python 3.7+
 - Windows/macOS/Linux
 
-### 安装依赖
+### 安装
+
+1. clone到本地
+ 
+```bash
+git clone --depth=1 https://github.com/tooplick/qq_music_download
+cd qq_music_download
+```
+2. pip安装依赖
+
 ```bash
 pip install -r requirements.txt
 ```
