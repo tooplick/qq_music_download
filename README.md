@@ -135,6 +135,11 @@ python songlist.py
 - **下载失败**：尝试切换网络环境或稍后重试
 - **搜索无结果**：检查关键词是否正确
 
+## 作者信息
+
+- **作者**：GeQian
+- **GitHub**：[https://github.com/tooplick](https://github.com/tooplick)
+
 ---
 
 **享受音乐，支持正版！**
