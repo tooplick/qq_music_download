@@ -5,13 +5,15 @@ import pickle
 import aiohttp
 import aiofiles
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Literal
 import logging
 import sys
 
 from qqmusic_api import user, songlist, song
 from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
+from qqmusic_api.lyric import get_lyric
+from mutagen.flac import FLAC, Picture
 
 # 配置
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
@@ -31,6 +33,83 @@ logging.basicConfig(
 logging.getLogger("qqmusic_api").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+
+
+def get_cover(mid: str, size: Literal[150, 300, 500, 800] = 800) -> str:
+
+    if size not in [150, 300, 500, 800]:
+        raise ValueError("not supported size")
+    return f"https://y.gtimg.cn/music/photo_new/T002R{size}x{size}M000{mid}.jpg"
+
+
+async def add_metadata_to_flac(file_path: Path, song_info: dict, cover_url: str = None, lyrics_data: dict = None):
+    """为FLAC文件添加封面和歌词"""
+    try:
+        audio = FLAC(file_path)
+
+        # 添加基本元数据
+        audio['title'] = song_info.get('songname', '')
+        audio['artist'] = song_info.get('singer', [{}])[0].get('name', '')
+        audio['album'] = song_info.get('album_name', '')
+
+        # 添加封面
+        if cover_url:
+            cover_data = await download_file_content(cover_url)
+            if cover_data and len(cover_data) > 1024:  # 确保不是空图片
+                image = Picture()
+                image.type = 3  # 封面图片
+                # 根据URL判断MIME类型
+                if cover_url.lower().endswith('.png'):
+                    image.mime = 'image/png'
+                else:
+                    image.mime = 'image/jpeg'
+                image.desc = 'Cover'
+                image.data = cover_data
+
+                audio.clear_pictures()
+                audio.add_picture(image)
+                logger.info(f"已添加封面到 {file_path.name}")
+
+        # 添加歌词
+        if lyrics_data:
+            lyric_text = lyrics_data.get('lyric', '')
+            if lyric_text:
+                audio['lyrics'] = lyric_text
+                logger.info(f"已添加歌词到 {file_path.name}")
+
+            # 添加翻译歌词（如果有）
+            trans_text = lyrics_data.get('trans', '')
+            if trans_text:
+                audio['translyrics'] = trans_text
+
+        audio.save()
+        logger.info(f"已为 {file_path.name} 添加元数据")
+        return True
+
+    except Exception as e:
+        logger.error(f"添加元数据失败: {e}")
+        return False
+
+
+async def download_file_content(url: str) -> Optional[bytes]:
+    """异步下载文件内容"""
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    content = await resp.read()
+                    # 检查内容是否有效（大于1KB）
+                    if len(content) > 1024:
+                        return content
+                    else:
+                        logger.warning(f"下载内容过小: {len(content)} bytes")
+                else:
+                    logger.warning(f"下载失败，状态码: {resp.status}")
+                return None
+    except Exception as e:
+        logger.error(f"下载文件时出错: {e}")
+        return None
 
 
 class OthersSonglistDownloader:
@@ -159,11 +238,18 @@ class OthersSonglistDownloader:
         # 检查是否为VIP歌曲
         is_vip = song_data.get('pay', {}).get('pay_play', 0) != 0
 
+        # 获取专辑信息
+        album_info = song_data.get('album', {})
+        album_name = album_info.get('name', '')
+        album_mid = album_info.get('mid', '')
+
         return {
             'songname': song_name,
             'singer': [{'name': singer_name}],
             'songmid': song_mid,
-            'is_vip': is_vip
+            'is_vip': is_vip,
+            'album_name': album_name,
+            'album_mid': album_mid
         }
 
     async def download_song_with_fallback(self, song_data: Dict[str, Any], folder: Path) -> bool:
@@ -179,6 +265,8 @@ class OthersSonglistDownloader:
             song_name = song_info['songname']
             singer_name = song_info['singer'][0]['name']
             is_vip = song_info['is_vip']
+            album_mid = song_info['album_mid']
+            album_name = song_info['album_name']
 
             # 如果无法获取歌曲mid，跳过下载
             if not song_mid:
@@ -204,12 +292,14 @@ class OthersSonglistDownloader:
                 ]
 
             # 尝试不同音质
+            downloaded_file_type = None
             for file_type, quality_name in quality_order:
                 file_path = folder / f"{safe_filename}{file_type.e}"
 
                 # 如果文件已存在，跳过下载
                 if file_path.exists():
                     print(f"文件已存在，跳过: {safe_filename} ({quality_name})")
+                    downloaded_file_type = file_type
                     return True
 
                 print(f">尝试下载 {quality_name}: {safe_filename}{' [VIP]' if is_vip else ''}")
@@ -231,6 +321,41 @@ class OthersSonglistDownloader:
                             async with aiofiles.open(file_path, 'wb') as f:
                                 await f.write(content)
                             print(f"-->下载成功 ({quality_name}): {safe_filename}")
+                            downloaded_file_type = file_type
+
+                            # 为FLAC文件自动添加元数据（不再询问）
+                            if downloaded_file_type == SongFileType.FLAC and file_path.suffix.lower() == '.flac':
+                                try:
+                                    # 获取封面URL
+                                    cover_url = None
+                                    if album_mid:
+                                        cover_url = get_cover(album_mid, 800)  # 使用800px大小的封面
+
+                                    # 获取歌词
+                                    lyrics_data = None
+                                    try:
+                                        lyrics_data = await get_lyric(song_mid)
+                                    except Exception as e:
+                                        print(f"!获取歌词失败: {e}")
+
+                                    # 添加元数据到FLAC文件
+                                    if cover_url or lyrics_data:
+                                        metadata_success = await add_metadata_to_flac(
+                                            file_path,
+                                            song_info,
+                                            cover_url,
+                                            lyrics_data
+                                        )
+                                        if metadata_success:
+                                            print(f"  已自动添加元数据(封面800px+歌词): {safe_filename}")
+                                        else:
+                                            print(f"!添加元数据失败: {safe_filename}")
+                                    else:
+                                        print(f"!无法获取元数据: {safe_filename}")
+
+                                except Exception as e:
+                                    print(f"!处理元数据失败: {e}")
+
                             return True
                         else:
                             print(f"!{quality_name}文件过小，可能下载失败: {song_name}")
@@ -295,8 +420,9 @@ class OthersSonglistDownloader:
 
         # 显示下载音质信息
         quality_info = "FLAC -> MP3_320 -> MP3_128" if self.prefer_flac else "MP3_320 -> MP3_128"
+        metadata_info = " (FLAC文件自动添加封面800px+歌词)" if self.prefer_flac else ""
         print(f"\n开始下载歌单: {songlist_name} (共 {len(songs)} 首歌曲)")
-        print(f"下载音质策略: {quality_info}")
+        print(f"下载音质策略: {quality_info}{metadata_info}")
 
         # 创建下载任务（限制并发数量）
         success_count = 0
@@ -332,7 +458,7 @@ class OthersSonglistDownloader:
     async def interactive_download(self):
         """交互式下载界面"""
         print("QQ音乐歌单下载器")
-        print("版本号:v2.0.3")
+        print("版本号:v2.0.4")
         print("-" * 50)
 
         # 加载凭证（包含自动刷新功能）
@@ -363,7 +489,7 @@ class OthersSonglistDownloader:
 
                 if flac_choice == 'y':
                     self.prefer_flac = True
-                    print("已选择高品质音质 (FLAC优先)")
+                    print("已选择高品质音质 (FLAC优先，自动添加封面800px+歌词)")
                 else:
                     self.prefer_flac = False
                     print("已选择标准音质 (MP3_320优先)")
@@ -376,7 +502,8 @@ class OthersSonglistDownloader:
                 # 在当前用户下循环选择歌单下载
                 while True:
                     print(f"\n当前用户: {target_musicid}")
-                    print(f"音质模式: {'高品质 (FLAC优先)' if self.prefer_flac else '标准 (MP3_320优先)'}")
+                    print(
+                        f"音质模式: {'高品质 (FLAC优先，自动添加封面800px+歌词)' if self.prefer_flac else '标准 (MP3_320优先)'}")
                     print(f"🎵 找到 {len(songlists)} 个歌单:")
                     for i, sl in enumerate(songlists, 1):
                         song_count = sl.get('songNum', 0)

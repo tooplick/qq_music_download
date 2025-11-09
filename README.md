@@ -16,16 +16,7 @@
 - Python 3.7+
 - Windows/macOS/Linux
 
-### 安装
-
-1. clone到本地
- 
-```bash
-git clone --depth=1 https://github.com/tooplick/qq_music_download
-cd qq_music_download
-```
-2. pip安装依赖
-
+### 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
@@ -76,12 +67,12 @@ python songlist.py
 
 ## 文件说明
 
-- `song.py` - 单曲搜索下载（支持自动凭证刷新）
-- `songlist.py` - 歌单下载（支持自动凭证刷新）
+- `song.py` - 单曲搜索下载
+- `songlist.py` - 歌单下载
 - `credential.py` - 登录与凭证管理（合并了原signin.py和credential.py）
 - `requirements.txt` - 项目依赖
 - `qqmusic_cred.pkl` - 登录凭证（自动生成）
-- `dist.zip` - exe打包文件，同Releases
+- `windows打包文件` - 见Releases
 
 ## 音质说明
 
@@ -95,10 +86,13 @@ python songlist.py
 
 ## 更新日志
 
-### v2.0.3 (最新)
--  合并登录与凭证管理功能
--  添加自动凭证刷新机制
--  统一凭证管理界面
+### v2.0.4
+- FLAC格式自动添加歌词封面(800px)
+
+### v2.0.3
+- 合并登录与凭证管理功能
+- 添加自动凭证刷新机制
+- 统一凭证管理界面
 
 ### v2.0.2
 - 基础单曲和歌单下载功能

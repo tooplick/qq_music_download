@@ -4,11 +4,91 @@ from pathlib import Path
 from qqmusic_api import search
 from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
+from qqmusic_api.lyric import get_lyric
+from mutagen.flac import FLAC, Picture
 import aiohttp
+from typing import Optional, Literal
 
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
 MUSIC_DIR = Path("./music")
 MUSIC_DIR.mkdir(exist_ok=True)
+
+
+def get_cover(mid: str, size: Literal[150, 300, 500, 800] = 800) -> str:
+
+    if size not in [150, 300, 500, 800]:
+        raise ValueError("not supported size")
+    return f"https://y.gtimg.cn/music/photo_new/T002R{size}x{size}M000{mid}.jpg"
+
+
+async def add_metadata_to_flac(file_path: Path, song_info: dict, cover_url: str = None, lyrics_data: dict = None):
+    """为FLAC文件添加封面和歌词"""
+    try:
+        audio = FLAC(file_path)
+
+        # 添加基本元数据
+        audio['title'] = song_info.get('title', '')
+        audio['artist'] = song_info.get('singer', [{}])[0].get('name', '')
+        audio['album'] = song_info.get('album', {}).get('name', '')
+
+        # 添加封面
+        if cover_url:
+            cover_data = await download_file_content(cover_url)
+            if cover_data and len(cover_data) > 1024:  # 确保不是空图片
+                image = Picture()
+                image.type = 3  # 封面图片
+                # 根据URL判断MIME类型
+                if cover_url.lower().endswith('.png'):
+                    image.mime = 'image/png'
+                else:
+                    image.mime = 'image/jpeg'
+                image.desc = 'Cover'
+                image.data = cover_data
+
+                audio.clear_pictures()
+                audio.add_picture(image)
+                print(f"  已添加封面到文件")
+
+        # 添加歌词
+        if lyrics_data:
+            lyric_text = lyrics_data.get('lyric', '')
+            if lyric_text:
+                audio['lyrics'] = lyric_text
+                print(f"  已添加歌词到文件")
+
+            # 添加翻译歌词（如果有）
+            trans_text = lyrics_data.get('trans', '')
+            if trans_text:
+                audio['translyrics'] = trans_text
+
+        audio.save()
+        print(f"  已为FLAC文件添加元数据")
+        return True
+
+    except Exception as e:
+        print(f"!添加元数据失败: {e}")
+        return False
+
+
+async def download_file_content(url: str) -> Optional[bytes]:
+    """异步下载文件内容"""
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    content = await resp.read()
+                    # 检查内容是否有效（大于1KB）
+                    if len(content) > 1024:
+                        return content
+                    else:
+                        print(f"!下载内容过小: {len(content)} bytes")
+                else:
+                    print(f"!下载失败，状态码: {resp.status}")
+                return None
+    except Exception as e:
+        print(f"!下载文件时出错: {e}")
+        return None
 
 
 async def load_and_refresh_credential() -> Credential | None:
@@ -99,6 +179,9 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
     mid = song_info['mid']
     song_name = song_info['title']
     singer_name = song_info['singer'][0]['name']
+    album_info = song_info.get('album', {})
+    album_name = album_info.get('name', '')
+    album_mid = album_info.get('mid', '')
 
     # 根据音质偏好设置下载策略
     if prefer_flac:
@@ -108,7 +191,7 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
             (SongFileType.MP3_320, "320kbps"),
             (SongFileType.MP3_128, "128kbps")
         ]
-        print("使用高品质音质策略: FLAC -> MP3_320 -> MP3_128")
+        print("使用高品质音质策略: FLAC -> MP3_320 -> MP3_128 (FLAC文件自动添加封面歌词)")
     else:
         # MP3优先策略：MP3_320 -> MP3_128
         quality_order = [
@@ -127,12 +210,14 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
     safe_filename = sanitize_filename(f"{song_name}-{singer_name}")
 
     # 尝试不同音质
+    downloaded_file_type = None
     for file_type, quality_name in quality_order:
         filepath = MUSIC_DIR / f"{safe_filename}{file_type.e}"
 
         # 如果文件已存在，跳过下载
         if filepath.exists():
             print(f"文件已存在，跳过: {safe_filename}{file_type.e} ({quality_name})")
+            downloaded_file_type = file_type
             return True
 
         print(f">尝试下载 {quality_name}: {safe_filename}{file_type.e}{' [VIP]' if vip else ''}")
@@ -160,6 +245,39 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
                                 f.write(content)
                             print(f"-->下载成功 ({quality_name}): {filepath}")
                             print(f"下载链接: {url}")
+                            downloaded_file_type = file_type
+
+                            # 为FLAC文件自动添加元数据
+                            if downloaded_file_type == SongFileType.FLAC and filepath.suffix.lower() == '.flac':
+                                try:
+                                    # 获取封面URL
+                                    cover_url = None
+                                    if album_mid:
+                                        cover_url = get_cover(album_mid, 800)  # 使用800px大小的封面
+
+                                    # 获取歌词
+                                    lyrics_data = None
+                                    try:
+                                        lyrics_data = await get_lyric(mid)
+                                    except Exception as e:
+                                        print(f"!获取歌词失败: {e}")
+
+                                    # 添加元数据到FLAC文件
+                                    if cover_url or lyrics_data:
+                                        metadata_success = await add_metadata_to_flac(
+                                            filepath,
+                                            song_info,
+                                            cover_url,
+                                            lyrics_data
+                                        )
+                                        if not metadata_success:
+                                            print(f"!添加元数据失败")
+                                    else:
+                                        print(f"!无法获取元数据")
+
+                                except Exception as e:
+                                    print(f"!处理元数据失败: {e}")
+
                             return True
                         else:
                             print(f"!{quality_name}文件过小，可能下载失败")
@@ -175,7 +293,7 @@ async def download_song_with_fallback(song_info: dict, credential: Credential | 
 
 async def main():
     print("QQ音乐单曲下载器")
-    print("版本号:v2.0.3")
+    print("版本号:v2.0.4")
     print("-" * 50)
     # 尝试加载本地凭证（包含自动刷新功能）
     credential = await load_and_refresh_credential()
@@ -186,7 +304,7 @@ async def main():
 
     if flac_choice == 'y':
         prefer_flac = True
-        print("已选择高品质音质 (FLAC优先)")
+        print("已选择高品质音质 (FLAC优先，自动添加封面歌词)")
     else:
         prefer_flac = False
         print("已选择标准音质 (MP3_320优先)")
