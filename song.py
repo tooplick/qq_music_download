@@ -1,374 +1,612 @@
+#!/usr/bin/env python3
+
 import asyncio
 import pickle
+import aiohttp
+import aiofiles
 from pathlib import Path
+from typing import Optional, Literal, Dict, Any, List, Tuple
+import logging
+import sys
+from dataclasses import dataclass
+from contextlib import asynccontextmanager
+
 from qqmusic_api import search
 from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
 from qqmusic_api.lyric import get_lyric
 from mutagen.flac import FLAC, Picture
 from mutagen.id3 import ID3, TIT2, TPE1, TALB, APIC, USLT
-import aiohttp
-from typing import Optional, Literal
 
 
-## 配置
-#封面尺寸配置[150, 300, 500, 800]
-cover_size = 800
-
-CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
-MUSIC_DIR = Path("./music")
-MUSIC_DIR.mkdir(exist_ok=True)
-
-
-def get_cover(mid: str, size: Literal[150, 300, 500, 800] = 800) -> str:
-    if size not in [150, 300, 500, 800]:
-        raise ValueError("not supported size")
-    return f"https://y.gtimg.cn/music/photo_new/T002R{size}x{size}M000{mid}.jpg"
+## 配置常量
+class Config:
+    COVER_SIZE = 800
+    DOWNLOAD_TIMEOUT = 30
+    CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
+    MUSIC_DIR = Path("./music")
+    MIN_FILE_SIZE = 1024
+    SEARCH_RESULTS_COUNT = 5
 
 
-async def add_metadata_to_flac(file_path: Path, song_info: dict, cover_url: str = None, lyrics_data: dict = None):
-    """为FLAC文件添加封面和歌词"""
-    try:
-        audio = FLAC(file_path)
-
-        # 添加基本元数据
-        audio['title'] = song_info.get('title', '')
-        audio['artist'] = song_info.get('singer', [{}])[0].get('name', '')
-        audio['album'] = song_info.get('album', {}).get('name', '')
-
-        # 添加封面
-        if cover_url:
-            cover_data = await download_file_content(cover_url)
-            if cover_data and len(cover_data) > 1024:  # 确保不是空图片
-                image = Picture()
-                image.type = 3  # 封面图片
-                # 根据URL判断MIME类型
-                if cover_url.lower().endswith('.png'):
-                    image.mime = 'image/png'
-                else:
-                    image.mime = 'image/jpeg'
-                image.desc = 'Cover'
-                image.data = cover_data
-
-                audio.clear_pictures()
-                audio.add_picture(image)
-
-        # 添加歌词
-        if lyrics_data:
-            lyric_text = lyrics_data.get('lyric', '')
-            if lyric_text:
-                audio['lyrics'] = lyric_text
-
-            # 添加翻译歌词（如果有）
-            trans_text = lyrics_data.get('trans', '')
-            if trans_text:
-                audio['translyrics'] = trans_text
-
-        audio.save()
-        return True
-
-    except Exception as e:
-        print(f"!添加元数据失败: {e}")
-        return False
+## 日志配置
+def setup_logging():
+    """配置日志系统"""
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler(sys.stdout)]
+    )
+    logging.getLogger("qqmusic_api").setLevel(logging.WARNING)
 
 
-async def add_metadata_to_mp3(file_path: Path, song_info: dict, cover_url: str = None, lyrics_data: dict = None):
-    """为MP3文件添加封面和歌词"""
-    try:
-        audio = ID3(file_path)
-
-        # 添加基本元数据
-        audio['TIT2'] = TIT2(encoding=3, text=song_info.get('title', ''))
-        audio['TPE1'] = TPE1(encoding=3, text=song_info.get('singer', [{}])[0].get('name', ''))
-        audio['TALB'] = TALB(encoding=3, text=song_info.get('album', {}).get('name', ''))
-
-        # 添加封面
-        if cover_url:
-            cover_data = await download_file_content(cover_url)
-            if cover_data and len(cover_data) > 1024:
-                # 根据URL判断MIME类型
-                if cover_url.lower().endswith('.png'):
-                    mime_type = 'image/png'
-                else:
-                    mime_type = 'image/jpeg'
-
-                audio['APIC'] = APIC(
-                    encoding=3,
-                    mime=mime_type,
-                    type=3,  # 封面图片
-                    desc='Cover',
-                    data=cover_data
-                )
-
-        # 添加歌词
-        if lyrics_data:
-            lyric_text = lyrics_data.get('lyric', '')
-            if lyric_text:
-                audio['USLT'] = USLT(encoding=3, lang='eng', desc='Lyrics', text=lyric_text)
-
-        audio.save()
-        return True
-
-    except Exception as e:
-        print(f"!添加MP3元数据失败: {e}")
-        return False
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
-async def download_file_content(url: str) -> Optional[bytes]:
-    """异步下载文件内容"""
-    try:
-        timeout = aiohttp.ClientTimeout(total=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    content = await resp.read()
-                    # 检查内容是否有效（大于1KB）
-                    if len(content) > 1024:
-                        return content
-                    else:
-                        print(f"!下载内容过小: {len(content)} bytes")
-                else:
-                    print(f"!下载失败，状态码: {resp.status}")
-                return None
-    except Exception as e:
-        print(f"!下载文件时出错: {e}")
-        return None
+@dataclass
+class SongInfo:
+    """歌曲信息数据类"""
+    name: str
+    singer: str
+    mid: str
+    is_vip: bool
+    album_name: str
+    album_mid: str
 
 
-async def load_and_refresh_credential() -> Credential | None:
-    """加载本地凭证，如果过期则自动刷新"""
-    if not CREDENTIAL_FILE.exists():
-        print("本地无凭证文件，仅能下载免费歌曲")
-        return None
-
-    try:
-        with CREDENTIAL_FILE.open("rb") as f:
-            cred: Credential = pickle.load(f)
-
-        # 检查是否过期
-        is_expired = await check_expired(cred)
-
-        if is_expired:
-            print("本地凭证已过期，尝试自动刷新...")
-
-            # 检查是否可以刷新
-            can_refresh = await cred.can_refresh()
-            if can_refresh:
-                try:
-                    await cred.refresh()
-                    # 保存刷新后的凭证
-                    with CREDENTIAL_FILE.open("wb") as f:
-                        pickle.dump(cred, f)
-                    print("凭证自动刷新成功!")
-                    return cred
-                except Exception as refresh_error:
-                    print(f"凭证自动刷新失败: {refresh_error}")
-                    print("将以未登录方式下载")
-                    return None
-            else:
-                print("凭证不支持刷新，将以未登录方式下载")
-                return None
-        else:
-            print(f"使用本地凭证登录成功!")
-            return cred
-
-    except Exception as e:
-        print(f"加载凭证失败: {e}，将以未登录方式下载")
-        return None
+class DownloadError(Exception):
+    """下载错误异常"""
+    pass
 
 
-async def search_song() -> dict:
-    """搜索歌曲并让用户选择要下载的那一首"""
-    keyword = ""
-    while not keyword:
-        keyword = input("请输入要搜索的歌曲: ").strip()
-        if not keyword:
-            print("歌曲名不能为空，请重新输入。")
+class MetadataError(Exception):
+    """元数据处理错误异常"""
+    pass
 
-    # 搜索前 5 条结果
-    results = await search.search_by_type(keyword, num=5)
-    if not results:
-        raise ValueError("未找到歌曲")
 
-    print("\n搜索结果如下：")
-    for idx, song in enumerate(results, start=1):
-        name = song["title"]
-        singers = ", ".join([s["name"] for s in song["singer"]])
-        # 判断是否为 VIP 歌曲
-        vip_flag = song.get("pay", {}).get("pay_play", 0) != 0
-        vip_label = " [VIP]" if vip_flag else ""
-        print(f"{idx}. {name} - {singers}{vip_label}")
+class NetworkManager:
+    """网络请求管理器"""
 
-    # 用户选择要下载的歌曲
-    choice = 0
-    while not (1 <= choice <= len(results)):
+    def __init__(self):
+        self.session = None
+
+    @asynccontextmanager
+    async def get_session(self):
+        """获取会话的上下文管理器"""
+        if self.session is None:
+            timeout = aiohttp.ClientTimeout(total=Config.DOWNLOAD_TIMEOUT)
+            self.session = aiohttp.ClientSession(timeout=timeout)
+
         try:
-            choice = int(input(f"请输入要下载的序号 (1-{len(results)}): "))
-        except ValueError:
-            print("请输入有效数字。")
+            yield self.session
+        except Exception as e:
+            raise DownloadError(f"网络请求失败: {e}")
 
-    song_info = results[choice - 1]
-    vip_flag = song_info.get("pay", {}).get("pay_play", 0) != 0
-    print(f"\n你选择了: {song_info['title']} - {song_info['singer'][0]['name']}{' [VIP]' if vip_flag else ''}")
+    async def close(self):
+        """关闭会话"""
+        if self.session:
+            await self.session.close()
+            self.session = None
 
-    return song_info
 
+class FileManager:
+    """文件管理类"""
 
-async def download_song_with_fallback(song_info: dict, credential: Credential | None, prefer_flac: bool):
-    """下载歌曲，根据音质偏好进行降级下载"""
-    vip = song_info.get('pay', {}).get('pay_play', 0) != 0
-    if vip and not credential:
-        print("这首歌是VIP歌曲，需要登录才能下载高音质版本")
-
-    mid = song_info['mid']
-    song_name = song_info['title']
-    singer_name = song_info['singer'][0]['name']
-    album_info = song_info.get('album', {})
-    album_name = album_info.get('name', '')
-    album_mid = album_info.get('mid', '')
-
-    # 根据音质偏好设置下载策略
-    if prefer_flac:
-        # FLAC优先策略：FLAC -> MP3_320 -> MP3_128
-        quality_order = [
-            (SongFileType.FLAC, "FLAC"),
-            (SongFileType.MP3_320, "320kbps"),
-            (SongFileType.MP3_128, "128kbps")
-        ]
-        print("使用高品质音质策略: FLAC -> MP3_320 -> MP3_128")
-    else:
-        # MP3优先策略：MP3_320 -> MP3_128
-        quality_order = [
-            (SongFileType.MP3_320, "320kbps"),
-            (SongFileType.MP3_128, "128kbps")
-        ]
-        print("使用标准音质策略: MP3_320 -> MP3_128")
-
-    # 清理文件名中的非法字符
+    @staticmethod
     def sanitize_filename(filename: str) -> str:
+        """清理文件名中的非法字符"""
         illegal_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*']
         for char in illegal_chars:
             filename = filename.replace(char, '_')
-        return filename
+        return filename.strip()
 
-    safe_filename = sanitize_filename(f"{song_name}-{singer_name}")
+    @staticmethod
+    def ensure_directory(path: Path) -> Path:
+        """确保目录存在"""
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
-    # 尝试不同音质
-    downloaded_file_type = None
-    for file_type, quality_name in quality_order:
-        filepath = MUSIC_DIR / f"{safe_filename}{file_type.e}"
 
-        # 如果文件已存在，跳过下载
-        if filepath.exists():
-            print(f"文件已存在，跳过: {safe_filename}{file_type.e} ({quality_name})")
-            downloaded_file_type = file_type
+class CoverManager:
+    """封面管理类"""
+
+    @staticmethod
+    def get_cover_url(mid: str, size: Literal[150, 300, 500, 800] = 800) -> str:
+        """获取封面URL"""
+        if size not in [150, 300, 500, 800]:
+            raise ValueError("不支持的封面尺寸")
+        return f"https://y.gtimg.cn/music/photo_new/T002R{size}x{size}M000{mid}.jpg"
+
+    @staticmethod
+    async def download_cover(url: str, network: NetworkManager) -> Optional[bytes]:
+        """下载封面图片"""
+        async with network.get_session() as session:
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    content = await resp.read()
+                    if len(content) > Config.MIN_FILE_SIZE:
+                        return content
+                    else:
+                        logger.warning(f"封面图片过小: {len(content)} bytes")
+                return None
+
+
+class MetadataManager:
+    """元数据管理类"""
+
+    def __init__(self, network: NetworkManager):
+        self.network = network
+
+    async def add_metadata_to_flac(self, file_path: Path, song_info: SongInfo,
+                                   cover_url: str = None, lyrics_data: dict = None) -> bool:
+        """为FLAC文件添加元数据"""
+        try:
+            audio = FLAC(file_path)
+
+            # 设置基本元数据
+            self._set_basic_metadata(audio, song_info)
+
+            # 添加封面
+            if cover_url:
+                await self._add_cover_to_flac(audio, cover_url)
+
+            # 添加歌词
+            if lyrics_data:
+                self._add_lyrics_to_flac(audio, lyrics_data)
+
+            audio.save()
             return True
 
-        print(f">尝试下载 {quality_name}: {safe_filename}{file_type.e}{' [VIP]' if vip else ''}")
+        except Exception as e:
+            logger.error(f"FLAC元数据添加失败: {e}")
+            raise MetadataError(f"FLAC元数据处理失败: {e}")
 
-        # 获取歌曲URL
-        urls = await get_song_urls([mid], file_type=file_type, credential=credential)
-        url = urls.get(mid)
+    async def add_metadata_to_mp3(self, file_path: Path, song_info: SongInfo,
+                                  cover_url: str = None, lyrics_data: dict = None) -> bool:
+        """为MP3文件添加元数据"""
+        try:
+            audio = ID3(file_path)
+
+            # 设置基本元数据
+            self._set_basic_metadata_mp3(audio, song_info)
+
+            # 添加封面
+            if cover_url:
+                await self._add_cover_to_mp3(audio, cover_url)
+
+            # 添加歌词
+            if lyrics_data:
+                self._add_lyrics_to_mp3(audio, lyrics_data)
+
+            audio.save()
+            return True
+
+        except Exception as e:
+            logger.error(f"MP3元数据添加失败: {e}")
+            raise MetadataError(f"MP3元数据处理失败: {e}")
+
+    def _set_basic_metadata(self, audio, song_info: SongInfo):
+        """设置基本元数据(FLAC)"""
+        audio['title'] = song_info.name
+        audio['artist'] = song_info.singer
+        audio['album'] = song_info.album_name
+
+    def _set_basic_metadata_mp3(self, audio, song_info: SongInfo):
+        """设置基本元数据(MP3)"""
+        audio['TIT2'] = TIT2(encoding=3, text=song_info.name)
+        audio['TPE1'] = TPE1(encoding=3, text=song_info.singer)
+        audio['TALB'] = TALB(encoding=3, text=song_info.album_name)
+
+    async def _add_cover_to_flac(self, audio, cover_url: str):
+        """为FLAC添加封面"""
+        cover_data = await CoverManager.download_cover(cover_url, self.network)
+        if cover_data:
+            image = Picture()
+            image.type = 3
+            image.mime = 'image/png' if cover_url.lower().endswith('.png') else 'image/jpeg'
+            image.desc = 'Cover'
+            image.data = cover_data
+
+            audio.clear_pictures()
+            audio.add_picture(image)
+
+    async def _add_cover_to_mp3(self, audio, cover_url: str):
+        """为MP3添加封面"""
+        cover_data = await CoverManager.download_cover(cover_url, self.network)
+        if cover_data:
+            mime_type = 'image/png' if cover_url.lower().endswith('.png') else 'image/jpeg'
+            audio['APIC'] = APIC(
+                encoding=3,
+                mime=mime_type,
+                type=3,
+                desc='Cover',
+                data=cover_data
+            )
+
+    def _add_lyrics_to_flac(self, audio, lyrics_data: dict):
+        """为FLAC添加歌词"""
+        if lyric_text := lyrics_data.get('lyric'):
+            audio['lyrics'] = lyric_text
+        if trans_text := lyrics_data.get('trans'):
+            audio['translyrics'] = trans_text
+
+    def _add_lyrics_to_mp3(self, audio, lyrics_data: dict):
+        """为MP3添加歌词"""
+        if lyric_text := lyrics_data.get('lyric'):
+            audio['USLT'] = USLT(encoding=3, lang='eng', desc='Lyrics', text=lyric_text)
+
+
+class CredentialManager:
+    """凭证管理器"""
+
+    def __init__(self, credential_file: Path = Config.CREDENTIAL_FILE):
+        self.credential_file = credential_file
+        self.credential_loaded = False
+        self.credential_refreshed = False
+
+    async def load_and_refresh_credential(self) -> Optional[Credential]:
+        """加载并刷新凭证"""
+        self.credential_loaded = False
+        self.credential_refreshed = False
+
+        if not self.credential_file.exists():
+            return None
+
+        try:
+            with self.credential_file.open("rb") as f:
+                cred: Credential = pickle.load(f)
+
+            if await check_expired(cred):
+                refreshed_cred = await self._refresh_credential(cred)
+                if refreshed_cred:
+                    self.credential_loaded = True
+                    self.credential_refreshed = True
+                    return refreshed_cred
+                else:
+                    return None
+
+            self.credential_loaded = True
+            return cred
+
+        except Exception as e:
+            logger.error(f"加载凭证失败: {e}")
+            return None
+
+    async def _refresh_credential(self, cred: Credential) -> Optional[Credential]:
+        """刷新凭证"""
+        if await cred.can_refresh():
+            try:
+                await cred.refresh()
+                with self.credential_file.open("wb") as f:
+                    pickle.dump(cred, f)
+                self.credential_refreshed = True
+                return cred
+            except Exception as e:
+                logger.error(f"凭证自动刷新失败: {e}")
+        return None
+
+
+class QQMusicSingleDownloader:
+    """QQ音乐单曲下载器"""
+
+    def __init__(self, download_dir: Path = Config.MUSIC_DIR):
+        self.download_dir = FileManager.ensure_directory(download_dir)
+        self.credential = None
+        self.prefer_flac = False
+
+        # 初始化组件
+        self.network = NetworkManager()
+        self.file_manager = FileManager()
+        self.credential_manager = CredentialManager()
+        self.metadata_manager = MetadataManager(self.network)
+
+    async def initialize(self):
+        """初始化下载器"""
+        await self.network.get_session().__aenter__()
+        self.credential = await self.credential_manager.load_and_refresh_credential()
+
+    async def close(self):
+        """关闭下载器"""
+        await self.network.close()
+
+    def get_credential_info(self) -> Tuple[str, bool, bool]:
+        """获取凭证文件信息"""
+        credential_info = "凭证文件: 不存在"
+        if Config.CREDENTIAL_FILE.exists():
+            try:
+                from datetime import datetime
+                file_mtime = datetime.fromtimestamp(Config.CREDENTIAL_FILE.stat().st_mtime)
+                credential_info = f"修改时间: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')}"
+            except Exception as e:
+                credential_info = f"修改时间: 无法获取 ({e})"
+
+        loaded = self.credential_manager.credential_loaded
+        refreshed = self.credential_manager.credential_refreshed
+        return credential_info, loaded, refreshed
+
+    async def search_songs(self, keyword: str) -> List[Dict[str, Any]]:
+        """搜索歌曲"""
+        if not keyword:
+            raise ValueError("搜索关键词不能为空")
+
+        try:
+            results = await search.search_by_type(keyword, num=Config.SEARCH_RESULTS_COUNT)
+            if not results:
+                raise ValueError("未找到相关歌曲")
+
+            return results
+        except Exception as e:
+            raise DownloadError(f"搜索失败: {e}")
+
+    def extract_song_info(self, song_data: Dict[str, Any]) -> SongInfo:
+        """提取歌曲信息"""
+        song_name = song_data.get('title', '未知歌曲')
+
+        singer_info = song_data.get('singer', [])
+        singer_name = (singer_info[0].get('name', '未知歌手')
+                       if singer_info and isinstance(singer_info, list)
+                       else '未知歌手')
+
+        return SongInfo(
+            name=song_name,
+            singer=singer_name,
+            mid=song_data.get('mid', ''),
+            is_vip=song_data.get('pay', {}).get('pay_play', 0) != 0,
+            album_name=song_data.get('album', {}).get('name', ''),
+            album_mid=song_data.get('album', {}).get('mid', '')
+        )
+
+    def _get_quality_strategy(self) -> List[Tuple[SongFileType, str]]:
+        """获取音质下载策略"""
+        if self.prefer_flac:
+            return [
+                (SongFileType.FLAC, "FLAC"),
+                (SongFileType.MP3_320, "320kbps"),
+                (SongFileType.MP3_128, "128kbps")
+            ]
+        else:
+            return [
+                (SongFileType.MP3_320, "320kbps"),
+                (SongFileType.MP3_128, "128kbps")
+            ]
+
+    async def download_song(self, song_data: Dict[str, Any]) -> bool:
+        """下载单首歌曲"""
+        try:
+            song_info = self.extract_song_info(song_data)
+
+            # 检查VIP歌曲权限
+            if song_info.is_vip and not self.credential:
+                print("这首歌是VIP歌曲，需要登录才能下载高音质版本")
+
+            safe_filename = self.file_manager.sanitize_filename(
+                f"{song_info.singer} - {song_info.name}"
+            )
+
+            # 尝试不同音质
+            for file_type, quality_name in self._get_quality_strategy():
+                file_path = self.download_dir / f"{safe_filename}{file_type.e}"
+
+                if file_path.exists():
+                    print(f"文件已存在，跳过: {file_path.name}")
+                    return True
+
+                success = await self._download_with_quality(
+                    song_info, file_type, quality_name, file_path
+                )
+                if success:
+                    return True
+
+            print("所有音质下载失败")
+            return False
+
+        except Exception as e:
+            logger.error(f"下载歌曲失败: {e}")
+            return False
+
+    async def _download_with_quality(self, song_info: SongInfo, file_type: SongFileType,
+                                     quality_name: str, file_path: Path) -> bool:
+        """使用指定音质下载"""
+        print(f"尝试下载 {quality_name}: {song_info.singer} - {song_info.name}{' [VIP]' if song_info.is_vip else ''}")
+
+        urls = await get_song_urls([song_info.mid], file_type=file_type,
+                                   credential=self.credential)
+        url = urls.get(song_info.mid)
 
         if not url:
-            print(f"!无法获取歌曲URL ({quality_name})")
-            continue
+            print(f"无法获取歌曲URL ({quality_name})")
+            return False
 
-        if isinstance(url, list):
-            url = url[0]
+        async with self.network.get_session() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    content = await response.read()
+                    if len(content) > Config.MIN_FILE_SIZE:
+                        await self._save_file(file_path, content)
+                        await self._add_metadata(file_path, song_info)
+                        print(f"下载成功: ---> {file_path.name}")
+                        return True
+                    else:
+                        print(f"文件过小，可能下载失败")
+                else:
+                    print(f"下载失败，状态码: {response.status}")
+
+        return False
+
+    async def _save_file(self, file_path: Path, content: bytes):
+        """保存文件"""
+        async with aiofiles.open(file_path, 'wb') as f:
+            await f.write(content)
+
+    async def _add_metadata(self, file_path: Path, song_info: SongInfo):
+        """添加元数据"""
+        try:
+            cover_url = (CoverManager.get_cover_url(song_info.album_mid, Config.COVER_SIZE)
+                         if song_info.album_mid else None)
+
+            lyrics_data = await self._get_lyrics(song_info.mid)
+
+            if file_path.suffix.lower() == '.flac':
+                await self.metadata_manager.add_metadata_to_flac(
+                    file_path, song_info, cover_url, lyrics_data
+                )
+            elif file_path.suffix.lower() in ['.mp3', '.m4a']:
+                await self.metadata_manager.add_metadata_to_mp3(
+                    file_path, song_info, cover_url, lyrics_data
+                )
+
+        except Exception as e:
+            logger.warning(f"元数据添加失败: {e}")
+
+    async def _get_lyrics(self, song_mid: str) -> Optional[dict]:
+        """获取歌词"""
+        try:
+            return await get_lyric(song_mid)
+        except Exception:
+            return None
+
+
+class InteractiveInterface:
+    """交互式界面"""
+
+    def __init__(self, downloader: QQMusicSingleDownloader):
+        self.downloader = downloader
+
+    async def run(self):
+        """运行交互界面"""
+        print("QQ音乐单曲下载器")
+        print("版本号: v2.1.0")
+
+        # 初始化下载器
+        await self.downloader.initialize()
+
+        # 获取凭证信息
+        credential_info, loaded, refreshed = self.downloader.get_credential_info()
+
+        # 显示凭证状态
+        if loaded:
+            if refreshed:
+                print("使用本地凭证登录成功 (已自动刷新)")
+            else:
+                print("使用本地凭证登录成功")
+        else:
+            print("未找到凭证文件，仅能下载免费歌曲")
+
+        # 显示凭证文件信息
+        print(credential_info)
+        print("-" * 50)
+
+        # 询问音质偏好
+        self.downloader.prefer_flac = self._ask_quality_preference()
+
+        # 主循环
+        while True:
+            try:
+                await self._search_and_download_loop()
+            except KeyboardInterrupt:
+                print("\n再见!")
+                break
+            except Exception as e:
+                print(f"发生错误: {e}")
+                continue
+
+    def _ask_quality_preference(self) -> bool:
+        """询问音质偏好"""
+        while True:
+            flac_choice = input("你希望下载更高音质吗？(y/n): ").strip().lower()
+            if flac_choice in ['y', 'n']:
+                prefer_flac = (flac_choice == 'y')
+                quality_text = "高品质音质 (FLAC优先)" if prefer_flac else "标准音质 (MP3_320优先)"
+                print(f"已选择 {quality_text}")
+                return prefer_flac
+            else:
+                print("请输入 y 或 n")
+
+    async def _search_and_download_loop(self):
+        """搜索和下载循环"""
+        # 获取搜索关键词
+        keyword = ""
+        while not keyword:
+            keyword = input("请输入要搜索的歌曲 (输入'q'退出): ").strip()
+            if keyword.lower() == 'q':
+                print("再见!")
+                exit(0)
+            if not keyword:
+                print("歌曲名不能为空，请重新输入")
+
+        # 搜索歌曲
+        try:
+            results = await self.downloader.search_songs(keyword)
+        except Exception as e:
+            print(f"搜索失败: {e}")
+            return
+
+        # 显示搜索结果
+        self._display_search_results(results)
+
+        # 选择歌曲
+        selected_song = self._select_song(results)
+        if not selected_song:
+            return
 
         # 下载歌曲
-        async with aiohttp.ClientSession() as session:
+        await self.downloader.download_song(selected_song)
+
+    def _display_search_results(self, results: List[Dict[str, Any]]):
+        """显示搜索结果"""
+        print(f"\n找到 {len(results)} 个结果:")
+        print("=" * 60)
+
+        for i, song_data in enumerate(results, 1):
+            song_info = self.downloader.extract_song_info(song_data)
+            vip_mark = " [VIP]" if song_info.is_vip else ""
+            print(f"{i}. {song_info.singer} - {song_info.name}{vip_mark}")
+
+        print("=" * 60)
+
+    def _select_song(self, results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """选择歌曲"""
+        while True:
             try:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        content = await resp.read()
-                        # 检查文件是否有效
-                        if len(content) > 1024:
-                            with open(filepath, "wb") as f:
-                                f.write(content)
-                            print(f"-->下载成功 ({quality_name}): {filepath}")
-                            print(f"下载链接: {url}")
-                            downloaded_file_type = file_type
+                choice = input(f"请输入要下载的序号 (1-{len(results)}, 输入'q'返回): ").strip()
 
-                            # 为所有文件自动添加元数据
-                            try:
-                                # 获取封面URL
-                                cover_url = None
-                                if album_mid:
-                                    cover_url = get_cover(album_mid, cover_size)  # 使用800px大小的封面
+                if choice.lower() == 'q':
+                    return None
 
-                                # 获取歌词
-                                lyrics_data = None
-                                try:
-                                    lyrics_data = await get_lyric(mid)
-                                except Exception:
-                                    pass  # 静默失败
-
-                                # 根据文件类型添加元数据
-                                if cover_url or lyrics_data:
-                                    if downloaded_file_type == SongFileType.FLAC and filepath.suffix.lower() == '.flac':
-                                        await add_metadata_to_flac(
-                                            filepath,
-                                            song_info,
-                                            cover_url,
-                                            lyrics_data
-                                        )
-                                    elif filepath.suffix.lower() in ['.mp3', '.m4a']:
-                                        await add_metadata_to_mp3(
-                                            filepath,
-                                            song_info,
-                                            cover_url,
-                                            lyrics_data
-                                        )
-
-                            except Exception:
-                                pass  # 静默处理元数据添加失败
-
-                            return True
-                        else:
-                            print(f"!{quality_name}文件过小，可能下载失败")
-                    else:
-                        print(f"!{quality_name}下载失败，HTTP状态码: {resp.status}")
-            except Exception as e:
-                print(f"!{quality_name}下载时发生错误: {e}")
-
-    # 所有音质都尝试失败
-    print("所有音质下载失败")
-    return False
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(results):
+                    selected_song = results[choice_num - 1]
+                    song_info = self.downloader.extract_song_info(selected_song)
+                    vip_mark = " [VIP]" if song_info.is_vip else ""
+                    print(f"你选择了: {song_info.singer} - {song_info.name}{vip_mark}")
+                    return selected_song
+                else:
+                    print(f"请输入 1-{len(results)} 之间的数字")
+            except ValueError:
+                print("请输入有效的数字")
+            except KeyboardInterrupt:
+                return None
 
 
 async def main():
-    print("QQ音乐单曲下载器")
-    print("版本号:v2.0.4")
-    print("-" * 50)
-    # 尝试加载本地凭证（包含自动刷新功能）
-    credential = await load_and_refresh_credential()
+    """主函数"""
+    downloader = QQMusicSingleDownloader()
 
-    # 询问音质偏好
-    print("-" * 50)
-    flac_choice = input("你希望更高音质吗？(y/n): ").strip().lower()
-
-    if flac_choice == 'y':
-        prefer_flac = True
-        print("已选择高品质音质 (FLAC优先)")
-    else:
-        prefer_flac = False
-        print("已选择标准音质 (MP3_320优先)")
-
-    while True:
-        try:
-            song_info = await search_song()
-            await download_song_with_fallback(song_info, credential, prefer_flac)
-        except ValueError as e:
-            print(f"错误: {e}")
-        except Exception as e:
-            print(f"发生未知错误: {e}")
-        print("-" * 20)  # 添加分隔符
+    try:
+        await downloader.initialize()
+        interface = InteractiveInterface(downloader)
+        await interface.run()
+    except Exception as e:
+        print(f"程序运行出错: {e}")
+    finally:
+        await downloader.close()
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("\n程序被用户中断，正在退出。")
+        print("\n程序被用户中断")
+    except Exception as e:
+        print(f"程序异常: {e}")
