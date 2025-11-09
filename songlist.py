@@ -18,6 +18,7 @@ from mutagen.flac import FLAC, Picture
 # 配置
 CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
 MUSIC_DIR = Path("./music")
+batch_size = 3  # 每次并发下载3首
 MUSIC_DIR.mkdir(exist_ok=True)
 
 # 日志配置 - 隐藏HTTP请求日志
@@ -347,7 +348,7 @@ class OthersSonglistDownloader:
                                             lyrics_data
                                         )
                                         if metadata_success:
-                                            print(f"  已自动添加元数据(封面800px+歌词): {safe_filename}")
+                                            print(f"  已自动添加元数据: {safe_filename}")
                                         else:
                                             print(f"!添加元数据失败: {safe_filename}")
                                     else:
@@ -420,14 +421,14 @@ class OthersSonglistDownloader:
 
         # 显示下载音质信息
         quality_info = "FLAC -> MP3_320 -> MP3_128" if self.prefer_flac else "MP3_320 -> MP3_128"
-        metadata_info = " (FLAC文件自动添加封面800px+歌词)" if self.prefer_flac else ""
+        metadata_info = " (FLAC文件自动添加歌词封面)" if self.prefer_flac else ""
         print(f"\n开始下载歌单: {songlist_name} (共 {len(songs)} 首歌曲)")
         print(f"下载音质策略: {quality_info}{metadata_info}")
 
         # 创建下载任务（限制并发数量）
         success_count = 0
         failed_count = 0
-        batch_size = 3  # 每次并发下载3首
+
 
         for i in range(0, len(songs), batch_size):
             batch = songs[i:i + batch_size]
@@ -489,7 +490,7 @@ class OthersSonglistDownloader:
 
                 if flac_choice == 'y':
                     self.prefer_flac = True
-                    print("已选择高品质音质 (FLAC优先，自动添加封面800px+歌词)")
+                    print("已选择高品质音质 (FLAC优先，自动添加封面歌词)")
                 else:
                     self.prefer_flac = False
                     print("已选择标准音质 (MP3_320优先)")
@@ -503,7 +504,7 @@ class OthersSonglistDownloader:
                 while True:
                     print(f"\n当前用户: {target_musicid}")
                     print(
-                        f"音质模式: {'高品质 (FLAC优先，自动添加封面800px+歌词)' if self.prefer_flac else '标准 (MP3_320优先)'}")
+                        f"音质模式: {'高品质 (FLAC优先，自动添加封面歌词)' if self.prefer_flac else '标准 (MP3_320优先)'}")
                     print(f"🎵 找到 {len(songlists)} 个歌单:")
                     for i, sl in enumerate(songlists, 1):
                         song_count = sl.get('songNum', 0)
