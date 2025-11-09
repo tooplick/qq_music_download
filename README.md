@@ -39,13 +39,13 @@ python songlist.py
 ```
 
 ## 配置参数说明
-- `COVER_SIZE`: 封面图片尺寸选项
-- `DOWNLOAD_TIMEOUT`: 网络请求超时时间
-- `CREDENTIAL_FILE`: 凭证文件存储位置
-- `MUSIC_DIR`: 音乐文件保存目录
-- `MIN_FILE_SIZE`: 文件完整性检查阈值
-- `BATCH_SIZE`: 并发下载数量（歌单专用）
-- `SEARCH_RESULTS_COUNT`: 搜索结果数量（单曲专用）
+- `COVER_SIZE = 800`: 封面图片尺寸选项,支持[150, 300, 500, 800]
+- `DOWNLOAD_TIMEOUT = 30`: 网络请求超时时间
+- `CREDENTIAL_FILE = Path("qqmusic_cred.pkl")`: 凭证文件存储位置
+- `MUSIC_DIR = Path("./music")`: 音乐文件保存目录
+- `MIN_FILE_SIZE = 1024`: 文件完整性检查阈值
+- `SEARCH_RESULTS_COUNT = 5`: 搜索结果数量（单曲专用）
+- `SEARCH_RESULTS_COUNT = 5`: 并发下载数量（歌单专用）
 
 ## 文件说明
 
