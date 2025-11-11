@@ -115,15 +115,89 @@ class CoverManager:
     """封面管理类"""
 
     @staticmethod
-    def get_cover_url(mid: str, size: Literal[150, 300, 500, 800] = 800) -> str:
-        """获取封面URL"""
+    def get_cover_url_by_album_mid(mid: str, size: Literal[150, 300, 500, 800] = 800) -> Optional[str]:
+        """通过专辑MID获取封面URL"""
+        if not mid:
+            return None
         if size not in [150, 300, 500, 800]:
             raise ValueError("不支持的封面尺寸")
         return f"https://y.gtimg.cn/music/photo_new/T002R{size}x{size}M000{mid}.jpg"
 
     @staticmethod
+    def get_cover_url_by_vs(vs: str, size: Literal[150, 300, 500, 800] = 800) -> Optional[str]:
+        """通过VS值获取封面URL"""
+        if not vs:
+            return None
+        if size not in [150, 300, 500, 800]:
+            raise ValueError("不支持的封面尺寸")
+        return f"https://y.qq.com/music/photo_new/T062R{size}x{size}M000{vs}.jpg"
+
+    @staticmethod
+    async def get_valid_cover_url(song_data: Dict[str, Any], network: NetworkManager,
+                                  size: Literal[150, 300, 500, 800] = 800) -> Optional[str]:
+        """获取并验证有效的封面URL（按优先级尝试所有可能的VS值）"""
+        # 1. 优先尝试专辑MID
+        album_mid = song_data.get('album', {}).get('mid', '')
+        if album_mid:
+            url = CoverManager.get_cover_url_by_album_mid(album_mid, size)
+            logger.debug(f"尝试专辑MID封面: {url}")
+            cover_data = await CoverManager.download_cover(url, network)
+            if cover_data:
+                logger.info(f"使用专辑MID封面: {url}")
+                return url
+
+        # 2. 尝试所有可用的VS值（按顺序）
+        vs_values = song_data.get('vs', [])
+        logger.debug(f"分析VS值: {vs_values}")
+
+        # 收集所有候选VS值
+        candidate_vs = []
+
+        # 首先收集所有单个有效的VS值
+        for i, vs in enumerate(vs_values):
+            if vs and isinstance(vs, str) and len(vs) >= 3 and ',' not in vs:
+                candidate_vs.append({
+                    'value': vs,
+                    'source': f'vs_single_{i}',
+                    'priority': 1  # 高优先级
+                })
+
+        # 然后收集逗号分隔的VS值部分
+        for i, vs in enumerate(vs_values):
+            if vs and ',' in vs:
+                parts = [part.strip() for part in vs.split(',') if part.strip()]
+                for j, part in enumerate(parts):
+                    if len(part) >= 3:
+                        candidate_vs.append({
+                            'value': part,
+                            'source': f'vs_part_{i}_{j}',
+                            'priority': 2  # 中优先级
+                        })
+
+        # 按优先级排序
+        candidate_vs.sort(key=lambda x: x['priority'])
+
+        logger.debug(f"候选VS值: {[c['value'] for c in candidate_vs]}")
+
+        # 按顺序尝试每个候选VS值
+        for candidate in candidate_vs:
+            url = CoverManager.get_cover_url_by_vs(candidate['value'], size)
+            logger.debug(f"尝试VS值封面 [{candidate['source']}]: {url}")
+            cover_data = await CoverManager.download_cover(url, network)
+            if cover_data:
+                logger.info(f"使用VS值封面 [{candidate['source']}]: {url}")
+                return url
+
+
+        logger.warning("未找到任何有效的封面URL")
+        return None
+
+    @staticmethod
     async def download_cover(url: str, network: NetworkManager) -> Optional[bytes]:
         """下载封面图片"""
+        if not url:
+            return None
+
         try:
             async with network.get_session() as session:
                 async with session.get(url) as resp:
@@ -133,13 +207,14 @@ class CoverManager:
                         if len(content) > Config.MIN_FILE_SIZE:
                             # 简单验证图片格式
                             if content.startswith(b'\xff\xd8') or content.startswith(b'\x89PNG'):
+                                logger.debug(f"封面下载成功: {len(content)} bytes")
                                 return content
                             else:
                                 logger.warning(f"封面图片格式无效: {url}")
                         else:
                             logger.warning(f"封面图片过小: {len(content)} bytes, URL: {url}")
                     else:
-                        logger.warning(f"封面下载失败: HTTP {resp.status}, URL: {url}")
+                        return None
                     return None
         except Exception as e:
             logger.error(f"封面下载异常: {e}, URL: {url}")
@@ -153,7 +228,7 @@ class MetadataManager:
         self.network = network
 
     async def add_metadata_to_flac(self, file_path: Path, song_info: SongInfo,
-                                   cover_url: str = None, lyrics_data: dict = None) -> bool:
+                                   lyrics_data: dict = None, song_data: Dict[str, Any] = None) -> bool:
         """为FLAC文件添加元数据"""
         try:
             audio = FLAC(file_path)
@@ -162,8 +237,8 @@ class MetadataManager:
             self._set_basic_metadata(audio, song_info)
 
             # 添加封面
-            if cover_url:
-                await self._add_cover_to_flac(audio, cover_url)
+            if song_data:
+                await self._add_cover_to_flac(audio, song_data)
 
             # 添加歌词
             if lyrics_data:
@@ -177,7 +252,7 @@ class MetadataManager:
             raise MetadataError(f"FLAC元数据处理失败: {e}")
 
     async def add_metadata_to_mp3(self, file_path: Path, song_info: SongInfo,
-                                  cover_url: str = None, lyrics_data: dict = None) -> bool:
+                                  lyrics_data: dict = None, song_data: Dict[str, Any] = None) -> bool:
         """为MP3文件添加元数据"""
         try:
             # 确保文件存在且可读
@@ -198,8 +273,8 @@ class MetadataManager:
             self._set_basic_metadata_mp3(audio, song_info)
 
             # 添加封面
-            if cover_url:
-                await self._add_cover_to_mp3(audio, cover_url)
+            if song_data:
+                await self._add_cover_to_mp3(audio, song_data)
 
             # 添加歌词
             if lyrics_data:
@@ -237,41 +312,48 @@ class MetadataManager:
         except Exception as e:
             logger.error(f"设置MP3基本元数据失败: {e}")
 
-    async def _add_cover_to_flac(self, audio, cover_url: str):
+    async def _add_cover_to_flac(self, audio, song_data: Dict[str, Any]):
         """为FLAC添加封面"""
-        cover_data = await CoverManager.download_cover(cover_url, self.network)
-        if cover_data:
-            image = Picture()
-            image.type = 3
-            image.mime = 'image/png' if cover_url.lower().endswith('.png') else 'image/jpeg'
-            image.desc = 'Cover'
-            image.data = cover_data
-
-            audio.clear_pictures()
-            audio.add_picture(image)
-
-    async def _add_cover_to_mp3(self, audio, cover_url: str):
-        """为MP3添加封面"""
-        try:
+        cover_url = await CoverManager.get_valid_cover_url(song_data, self.network, Config.COVER_SIZE)
+        if cover_url:
             cover_data = await CoverManager.download_cover(cover_url, self.network)
             if cover_data:
-                # 检测图片类型
+                image = Picture()
+                image.type = 3
+                # 根据URL判断图片类型
                 if cover_url.lower().endswith('.png'):
-                    mime_type = 'image/png'
+                    image.mime = 'image/png'
                 else:
-                    mime_type = 'image/jpeg'
+                    image.mime = 'image/jpeg'
+                image.desc = 'Cover'
+                image.data = cover_data
 
-                # 添加封面图片
-                audio.add(APIC(
-                    encoding=3,  # UTF-8
-                    mime=mime_type,
-                    type=3,  # 封面图片
-                    desc='Cover',
-                    data=cover_data
-                ))
-                logger.debug(f"MP3封面添加成功: {len(cover_data)} bytes")
-            else:
-                logger.warning(f"无法下载封面: {cover_url}")
+                audio.clear_pictures()
+                audio.add_picture(image)
+                logger.info("FLAC封面添加成功")
+
+    async def _add_cover_to_mp3(self, audio, song_data: Dict[str, Any]):
+        """为MP3添加封面"""
+        try:
+            cover_url = await CoverManager.get_valid_cover_url(song_data, self.network, Config.COVER_SIZE)
+            if cover_url:
+                cover_data = await CoverManager.download_cover(cover_url, self.network)
+                if cover_data:
+                    # 检测图片类型
+                    if cover_url.lower().endswith('.png'):
+                        mime_type = 'image/png'
+                    else:
+                        mime_type = 'image/jpeg'
+
+                    # 添加封面图片
+                    audio.add(APIC(
+                        encoding=3,  # UTF-8
+                        mime=mime_type,
+                        type=3,  # 封面图片
+                        desc='Cover',
+                        data=cover_data
+                    ))
+                    logger.info("MP3封面添加成功")
         except Exception as e:
             logger.error(f"添加MP3封面失败: {e}")
 
@@ -573,7 +655,7 @@ class QQMusicDownloader:
                     return True
 
                 success = await self._download_with_quality(
-                    song_info, file_type, quality_name, file_path, safe_filename
+                    song_info, file_type, quality_name, file_path, safe_filename, song_data
                 )
                 if success:
                     return True
@@ -590,7 +672,8 @@ class QQMusicDownloader:
             return False
 
     async def _download_with_quality(self, song_info: SongInfo, file_type: SongFileType,
-                                     quality_name: str, file_path: Path, safe_filename: str) -> bool:
+                                     quality_name: str, file_path: Path, safe_filename: str,
+                                     song_data: Dict[str, Any]) -> bool:
         """使用指定音质下载"""
         print(f"尝试下载 {quality_name}: {safe_filename}{' [VIP]' if song_info.is_vip else ''}")
 
@@ -608,7 +691,7 @@ class QQMusicDownloader:
                     content = await response.read()
                     if len(content) > Config.MIN_FILE_SIZE:
                         await self._save_file(file_path, content)
-                        await self._add_metadata(file_path, song_info)
+                        await self._add_metadata(file_path, song_info, song_data)
                         self.download_logger.log_success(song_info, quality_name, file_path)
                         return True
                     else:
@@ -623,21 +706,18 @@ class QQMusicDownloader:
         async with aiofiles.open(file_path, 'wb') as f:
             await f.write(content)
 
-    async def _add_metadata(self, file_path: Path, song_info: SongInfo):
+    async def _add_metadata(self, file_path: Path, song_info: SongInfo, song_data: Dict[str, Any]):
         """添加元数据"""
         try:
-            cover_url = (CoverManager.get_cover_url(song_info.album_mid, Config.COVER_SIZE)
-                         if song_info.album_mid else None)
-
             lyrics_data = await self._get_lyrics(song_info.mid)
 
             if file_path.suffix.lower() == '.flac':
                 await self.metadata_manager.add_metadata_to_flac(
-                    file_path, song_info, cover_url, lyrics_data
+                    file_path, song_info, lyrics_data, song_data
                 )
             elif file_path.suffix.lower() in ['.mp3', '.m4a']:
                 await self.metadata_manager.add_metadata_to_mp3(
-                    file_path, song_info, cover_url, lyrics_data
+                    file_path, song_info, lyrics_data, song_data
                 )
 
         except Exception as e:
