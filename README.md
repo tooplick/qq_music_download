@@ -13,7 +13,7 @@
 ## 安装要求
 
 ### 系统要求
-- Python 3.10+
+- Python 3.11+
 - Windows/macOS/Linux
 
 ### 安装依赖
