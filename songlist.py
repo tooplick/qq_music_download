@@ -124,15 +124,26 @@ class CoverManager:
     @staticmethod
     async def download_cover(url: str, network: NetworkManager) -> Optional[bytes]:
         """下载封面图片"""
-        async with network.get_session() as session:
-            async with session.get(url) as resp:
-                if resp.status == 200:
-                    content = await resp.read()
-                    if len(content) > Config.MIN_FILE_SIZE:
-                        return content
+        try:
+            async with network.get_session() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        content = await resp.read()
+                        # 检查文件大小和内容有效性
+                        if len(content) > Config.MIN_FILE_SIZE:
+                            # 简单验证图片格式
+                            if content.startswith(b'\xff\xd8') or content.startswith(b'\x89PNG'):
+                                return content
+                            else:
+                                logger.warning(f"封面图片格式无效: {url}")
+                        else:
+                            logger.warning(f"封面图片过小: {len(content)} bytes, URL: {url}")
                     else:
-                        logger.warning(f"封面图片过小: {len(content)} bytes")
-                return None
+                        logger.warning(f"封面下载失败: HTTP {resp.status}, URL: {url}")
+                    return None
+        except Exception as e:
+            logger.error(f"封面下载异常: {e}, URL: {url}")
+            return None
 
 
 class MetadataManager:
@@ -169,7 +180,19 @@ class MetadataManager:
                                   cover_url: str = None, lyrics_data: dict = None) -> bool:
         """为MP3文件添加元数据"""
         try:
-            audio = ID3(file_path)
+            # 确保文件存在且可读
+            if not file_path.exists():
+                logger.error(f"文件不存在: {file_path}")
+                return False
+
+            # 尝试读取现有ID3标签，如果不存在则创建新的
+            try:
+                audio = ID3(file_path)
+            except Exception:
+                audio = ID3()
+
+            # 清除现有的封面和歌词标签
+            self._clear_existing_mp3_tags(audio)
 
             # 设置基本元数据
             self._set_basic_metadata_mp3(audio, song_info)
@@ -182,12 +205,21 @@ class MetadataManager:
             if lyrics_data:
                 self._add_lyrics_to_mp3(audio, lyrics_data)
 
-            audio.save()
+            # 保存标签
+            audio.save(file_path, v2_version=3)  # 使用ID3v2.3确保兼容性
+            logger.debug(f"MP3元数据添加成功: {file_path}")
             return True
 
         except Exception as e:
             logger.error(f"MP3元数据添加失败: {e}")
             raise MetadataError(f"MP3元数据处理失败: {e}")
+
+    def _clear_existing_mp3_tags(self, audio):
+        """清除现有的MP3标签"""
+        tags_to_remove = ['APIC:', 'USLT:', 'TIT2', 'TPE1', 'TALB']
+        for tag in tags_to_remove:
+            if tag in audio:
+                del audio[tag]
 
     def _set_basic_metadata(self, audio, song_info: SongInfo):
         """设置基本元数据(FLAC)"""
@@ -197,9 +229,13 @@ class MetadataManager:
 
     def _set_basic_metadata_mp3(self, audio, song_info: SongInfo):
         """设置基本元数据(MP3)"""
-        audio['TIT2'] = TIT2(encoding=3, text=song_info.name)
-        audio['TPE1'] = TPE1(encoding=3, text=song_info.singer)
-        audio['TALB'] = TALB(encoding=3, text=song_info.album_name)
+        try:
+            # 使用UTF-8编码确保中文正确显示
+            audio.add(TIT2(encoding=3, text=song_info.name))
+            audio.add(TPE1(encoding=3, text=song_info.singer))
+            audio.add(TALB(encoding=3, text=song_info.album_name))
+        except Exception as e:
+            logger.error(f"设置MP3基本元数据失败: {e}")
 
     async def _add_cover_to_flac(self, audio, cover_url: str):
         """为FLAC添加封面"""
@@ -216,16 +252,28 @@ class MetadataManager:
 
     async def _add_cover_to_mp3(self, audio, cover_url: str):
         """为MP3添加封面"""
-        cover_data = await CoverManager.download_cover(cover_url, self.network)
-        if cover_data:
-            mime_type = 'image/png' if cover_url.lower().endswith('.png') else 'image/jpeg'
-            audio['APIC'] = APIC(
-                encoding=3,
-                mime=mime_type,
-                type=3,
-                desc='Cover',
-                data=cover_data
-            )
+        try:
+            cover_data = await CoverManager.download_cover(cover_url, self.network)
+            if cover_data:
+                # 检测图片类型
+                if cover_url.lower().endswith('.png'):
+                    mime_type = 'image/png'
+                else:
+                    mime_type = 'image/jpeg'
+
+                # 添加封面图片
+                audio.add(APIC(
+                    encoding=3,  # UTF-8
+                    mime=mime_type,
+                    type=3,  # 封面图片
+                    desc='Cover',
+                    data=cover_data
+                ))
+                logger.debug(f"MP3封面添加成功: {len(cover_data)} bytes")
+            else:
+                logger.warning(f"无法下载封面: {cover_url}")
+        except Exception as e:
+            logger.error(f"添加MP3封面失败: {e}")
 
     def _add_lyrics_to_flac(self, audio, lyrics_data: dict):
         """为FLAC添加歌词"""
@@ -236,8 +284,17 @@ class MetadataManager:
 
     def _add_lyrics_to_mp3(self, audio, lyrics_data: dict):
         """为MP3添加歌词"""
-        if lyric_text := lyrics_data.get('lyric'):
-            audio['USLT'] = USLT(encoding=3, lang='eng', desc='Lyrics', text=lyric_text)
+        try:
+            if lyric_text := lyrics_data.get('lyric'):
+                audio.add(USLT(
+                    encoding=3,
+                    lang='eng',
+                    desc='Lyrics',
+                    text=lyric_text
+                ))
+                logger.debug("MP3歌词添加成功")
+        except Exception as e:
+            logger.error(f"添加MP3歌词失败: {e}")
 
 
 class CredentialManager:
@@ -319,7 +376,7 @@ class DownloadLogger:
         }
         self.successful_downloads.append(log_entry)
 
-        # 使用print输出，不使用图标
+        # 使用print输出
         vip_mark = " [VIP]" if song_info.is_vip else ""
         message = f"下载成功: ---> {file_path.name}"
         print(f"  {message}")
@@ -334,7 +391,7 @@ class DownloadLogger:
         }
         self.failed_downloads.append(log_entry)
 
-        # 使用print输出，不使用图标
+        # 使用print输出
         vip_mark = " [VIP]" if song_info.is_vip else ""
         message = f"下载失败: {song_info.singer} - {song_info.name}{vip_mark} - {reason}"
         print(f"  {message}")
@@ -668,7 +725,7 @@ class InteractiveInterface:
     async def run(self):
         """运行交互界面"""
         print("QQ音乐歌单下载器")
-        print("版本号: v2.1.0")
+        print("版本号: v2.1.1")
 
         # 初始化下载器
         await self.downloader.initialize()
