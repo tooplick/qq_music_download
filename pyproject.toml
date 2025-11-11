@@ -1,6 +1,6 @@
 [project]
 name = "qq-music-download"
-version = "2.1.0"
+version = "2.1.1"
 description = "download music"
 authors = [
     {name = "tooplick",email = "id6543156918@gmail.com"}
