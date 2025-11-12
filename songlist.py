@@ -28,6 +28,8 @@ class Config:
     DOWNLOAD_TIMEOUT = 30
     CREDENTIAL_FILE = Path("qqmusic_cred.pkl")
     MUSIC_DIR = Path("./music")
+    FOLDER_NAME = "{songlist_name}"  # 歌单文件夹名称格式
+    # FOLDER_NAME = "用户{user_id}_{songlist_name}"
     MIN_FILE_SIZE = 1024  # 最小文件大小检查
 
 
@@ -759,7 +761,7 @@ class QQMusicDownloader:
             return 0, 0
 
         songlist_name = songlist_info.get('dirName', '未知歌单')
-        safe_folder_name = self.file_manager.sanitize_filename(f"用户{user_id}_{songlist_name}")
+        safe_folder_name = self.file_manager.sanitize_filename(Config.FOLDER_NAME.format(user_id=user_id, songlist_name=songlist_name))
         folder = FileManager.ensure_directory(self.download_dir / safe_folder_name)
 
         quality_info = "FLAC -> MP3_320 -> MP3_128" if self.prefer_flac else "MP3_320 -> MP3_128"
@@ -804,7 +806,7 @@ class InteractiveInterface:
 
     async def run(self):
         """运行交互界面"""
-        print("QQ音乐歌单下载器")
+        print("QQ音乐歌单下载")
         print("版本号: v2.1.1")
 
         # 初始化下载器

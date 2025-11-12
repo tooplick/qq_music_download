@@ -46,6 +46,7 @@ python songlist.py
 - `MIN_FILE_SIZE = 1024`: 文件完整性检查阈值
 - `SEARCH_RESULTS_COUNT = 5`: 搜索结果数量（单曲专用）
 - `SEARCH_RESULTS_COUNT = 5`: 并发下载数量（歌单专用）
+- `FOLDER_NAME = "{songlist_name}"` = 歌单文件夹名称格式
 
 ## 文件说明
 
@@ -69,6 +70,7 @@ python songlist.py
 ## 更新日志
 ### v2.1.1
 - 解决封面添加失败问题
+- 自定义歌单文件夹名称格式
 
 ### v2.1.0
 - 重构优化代码逻辑
