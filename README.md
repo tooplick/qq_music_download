@@ -16,25 +16,29 @@
 - Python 3.11+
 - Windows/macOS/Linux
 
+### Clone 到本地
+```python
+git clone --depth=1 https://github.com/tooplick/qq_music_download
+cd qq_music_download
+```
 ### 安装依赖
-```bash
+```python
 pip install -r requirements.txt
 ```
-
 ## 使用方法
 
 ### 1. 登录与凭证管理（推荐）
-```bash
+```python
 python credential.py
 ```
 
 ### 2. 单曲下载
-```bash
+```python
 python song.py
 ```
 
 ### 3. 歌单下载
-```bash
+```python
 python songlist.py
 ```
 
