@@ -5,7 +5,7 @@ description = "download music"
 authors = [
     {name = "tooplick",email = "id6543156918@gmail.com"}
 ]
-license = {text = "MIT"}
+license = {text = "GPL-3.0"}
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -38,6 +38,8 @@ dependencies = [
     "yarl==1.22.0",
 ]
 
+[tool.poetry]
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
