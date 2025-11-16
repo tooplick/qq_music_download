@@ -13,7 +13,7 @@
 ## 安装要求
 
 ### 系统要求
-- Python 3.11+
+- Python 3.10+
 - Windows/macOS/Linux
 
 ### Clone 到本地
