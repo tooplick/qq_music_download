@@ -25,6 +25,10 @@ cd qq_music_download
 ```python
 pip install -r requirements.txt
 ```
+**或者使用 `pyproject.toml` 安装依赖**
+```python
+pip install .
+```
 ## 使用方法
 
 ### 1. 登录与凭证管理（推荐）
@@ -59,6 +63,7 @@ python songlist.py
 - `credential.py` - 登录与凭证管理（合并了原signin.py和credential.py）
 - `requirements.txt` - 项目依赖
 - `qqmusic_cred.pkl` - 登录凭证（自动生成）
+- `credential.spec` - 打包 credential.py 的配置文件
 - `windows打包文件` - 见Releases
 
 ## 音质说明
