@@ -45,6 +45,10 @@ python song.py
 ```python
 python songlist.py
 ```
+### 4. 如果运行报错
+**请运行**：
+   -  `pip install qqmusic-api-python flask aiohttp mutagen`
+   - `sudo apt update && sudo apt install libzbar0 libzbar-dev`
 
 ## 配置参数说明
 - `COVER_SIZE = 800`: 封面图片尺寸选项,支持[150, 300, 500, 800]
