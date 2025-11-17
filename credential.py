@@ -52,23 +52,44 @@ class CredentialManager:
             return False
 
     async def qr_login(self, qr_type: QRLoginType) -> Credential | None:
-        """二维码登录并保存凭证"""
-        qr = await get_qrcode(qr_type)
-        qr_path = qr.save()
-        print(f"请扫描二维码登录，二维码已保存至: {qr_path} ...")
+        """二维码登录并保存凭证，终端直接显示二维码"""
+        from io import BytesIO
+        from PIL import Image
+        from pyzbar.pyzbar import decode
+        import qrcode
 
+        # 获取二维码
+        qr = await get_qrcode(qr_type)
+
+        # --- 在终端显示二维码（替换原来的 qr.save()） ---
+        try:
+            img = Image.open(BytesIO(qr.data))
+            result = decode(img)
+            if not result:
+                raise ValueError("二维码解码失败")
+            url = result[0].data.decode("utf-8")
+
+            print("\n请使用手机扫码登录：\n")
+            qr_gen = qrcode.QRCode(border=1)
+            qr_gen.add_data(url)
+            qr_gen.make(fit=True)
+            qr_gen.print_ascii(invert=True)
+            print("\n")
+        except Exception as e:
+            print(f"二维码显示失败: {e}")
+            # 备用方案：保存二维码图片
+            qr_path = qr.save()
+            print(f"二维码已保存至: {qr_path}")
+
+        # 轮询二维码状态
         credential = None
         while True:
             event, credential = await check_qrcode(qr)
             print(f"二维码状态: {event.name}")
             if event == QRCodeLoginEvents.DONE:
                 print(f"登录成功! 用户ID: {credential.musicid if hasattr(credential, 'musicid') else '未知'}")
-                # 保存凭证
                 self.credential = credential
                 self.save_credential()
-                # 删除二维码图片
-                if os.path.exists(qr_path):
-                    os.remove(qr_path)
                 return credential
             elif event == QRCodeLoginEvents.TIMEOUT:
                 print("二维码过期，请重新运行程序")
