@@ -1,3 +1,7 @@
+qqmusic-api-python 
+flask 
+aiohttp 
+mutagen
 aiocache==0.12.3
 aiofiles==25.1.0
 aiohappyeyeballs==2.6.1
