@@ -31,7 +31,7 @@ pip install .
 ```
 ## 使用方法
 
-### 1. 登录与凭证管理（推荐）
+### 1. 登录与凭证管理
 ```python
 python credential.py
 ```
