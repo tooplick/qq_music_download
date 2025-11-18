@@ -47,7 +47,7 @@ python songlist.py
 ```
 ### 4. 如果运行报错
 **请运行**：
-   -  `pip install qqmusic-api-python flask aiohttp mutagen`
+   - `pip install qqmusic-api-python flask aiohttp mutagen`
    - `sudo apt update && sudo apt install libzbar0 libzbar-dev`
 
 ## 配置参数说明
