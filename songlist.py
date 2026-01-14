@@ -31,6 +31,7 @@ class Config:
     FOLDER_NAME = "{songlist_name}"  # 歌单文件夹名称格式
     # FOLDER_NAME = "用户{user_id}_{songlist_name}"
     MIN_FILE_SIZE = 1024  # 最小文件大小检查
+    EXTERNAL_API_URL = "https://api.ygking.top"  # 外部API地址
 
 
 ## 日志配置 - 只显示警告和错误
@@ -384,36 +385,101 @@ class MetadataManager:
 class CredentialManager:
     """凭证管理器"""
 
-    def __init__(self, credential_file: Path = Config.CREDENTIAL_FILE):
+    def __init__(self, credential_file: Path = Config.CREDENTIAL_FILE,
+                 external_api_url: str = Config.EXTERNAL_API_URL):
         self.credential_file = credential_file
+        self.external_api_url = external_api_url.rstrip('/') if external_api_url else ""
         self.credential_loaded = False
         self.credential_refreshed = False
+        self.loaded_from_api = False
 
     async def load_and_refresh_credential(self) -> Optional[Credential]:
         """加载并刷新凭证"""
         self.credential_loaded = False
         self.credential_refreshed = False
+        self.loaded_from_api = False
 
-        if not self.credential_file.exists():
+        # 优先尝试从本地文件加载
+        if self.credential_file.exists():
+            try:
+                with self.credential_file.open("rb") as f:
+                    cred: Credential = pickle.load(f)
+
+                if await check_expired(cred):
+                    refreshed_cred = await self._refresh_credential(cred)
+                    if refreshed_cred:
+                        self.credential_loaded = True
+                        self.credential_refreshed = True
+                        return refreshed_cred
+                    else:
+                        # 本地凭证过期且无法刷新，尝试从外部API加载
+                        return await self._try_load_from_api()
+
+                self.credential_loaded = True
+                return cred
+
+            except Exception as e:
+                # 本地文件加载失败，尝试从外部API加载
+                return await self._try_load_from_api()
+        
+        # 本地文件不存在，尝试从外部API加载
+        return await self._try_load_from_api()
+
+    async def _try_load_from_api(self) -> Optional[Credential]:
+        """尝试从外部API加载凭证"""
+        if not self.external_api_url:
             return None
-
+        
         try:
-            with self.credential_file.open("rb") as f:
-                cred: Credential = pickle.load(f)
+            cred = await self.load_from_external_api()
+            if cred:
+                self.credential_loaded = True
+                self.loaded_from_api = True
+                return cred
+        except Exception:
+            pass
+        
+        return None
 
-            if await check_expired(cred):
-                refreshed_cred = await self._refresh_credential(cred)
-                if refreshed_cred:
-                    self.credential_loaded = True
-                    self.credential_refreshed = True
-                    return refreshed_cred
-                else:
-                    return None
-
-            self.credential_loaded = True
-            return cred
-
-        except Exception as e:
+    async def load_from_external_api(self) -> Optional[Credential]:
+        """从外部API加载凭证"""
+        if not self.external_api_url:
+            return None
+        
+        url = f"{self.external_api_url}/api/credential"
+        
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        cred_data = data.get('credential', {})
+                        
+                        if not cred_data or not cred_data.get('musicid') or not cred_data.get('musickey'):
+                            return None
+                        
+                        # 构建Credential对象
+                        cred = Credential(
+                            openid=cred_data.get('openid', ''),
+                            refresh_token=cred_data.get('refresh_token', ''),
+                            access_token=cred_data.get('access_token', ''),
+                            expired_at=cred_data.get('expired_at', 0),
+                            musicid=cred_data.get('musicid', 0),
+                            musickey=cred_data.get('musickey', ''),
+                            unionid=cred_data.get('unionid', ''),
+                            str_musicid=cred_data.get('str_musicid', ''),
+                            refresh_key=cred_data.get('refresh_key', ''),
+                            encrypt_uin=cred_data.get('encrypt_uin', ''),
+                            login_type=cred_data.get('login_type', 2)
+                        )
+                        
+                        return cred
+                    else:
+                        return None
+        except asyncio.TimeoutError:
+            return None
+        except Exception:
             return None
 
     async def _refresh_credential(self, cred: Credential) -> Optional[Credential]:
@@ -541,12 +607,13 @@ class QQMusicDownloader:
         """关闭下载器"""
         await self.network.close()
 
-    def get_credential_info(self) -> Tuple[str, bool, bool]:
+    def get_credential_info(self) -> Tuple[str, bool, bool, bool]:
         """获取凭证文件信息"""
         credential_info = self.credential_manager.get_credential_info()
         loaded = self.credential_manager.credential_loaded
         refreshed = self.credential_manager.credential_refreshed
-        return credential_info, loaded, refreshed
+        loaded_from_api = self.credential_manager.loaded_from_api
+        return credential_info, loaded, refreshed, loaded_from_api
 
     def _check_credential(self) -> bool:
         """检查凭证是否有效"""
@@ -807,17 +874,19 @@ class InteractiveInterface:
     async def run(self):
         """运行交互界面"""
         print("QQ音乐歌单下载")
-        print("版本号: v2.1.1")
+        print("版本号: v2.2.0")
 
         # 初始化下载器
         await self.downloader.initialize()
 
         # 获取凭证信息
-        credential_info, loaded, refreshed = self.downloader.get_credential_info()
+        credential_info, loaded, refreshed, loaded_from_api = self.downloader.get_credential_info()
 
         # 显示凭证状态
         if loaded:
-            if refreshed:
+            if loaded_from_api:
+                print(f"从外部API加载凭证 ({Config.EXTERNAL_API_URL})")
+            elif refreshed:
                 print("使用本地凭证登录成功 (已自动刷新)")
             else:
                 print("使用本地凭证登录成功")
@@ -825,7 +894,8 @@ class InteractiveInterface:
             print("凭证加载失败")
 
         # 显示凭证文件信息
-        print(credential_info)
+        if not loaded_from_api:
+            print(credential_info)
 
         print("-" * 50)
 
