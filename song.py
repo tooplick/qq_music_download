@@ -694,7 +694,7 @@ class InteractiveInterface:
         # 显示凭证状态
         if loaded:
             if loaded_from_api:
-                print(f"从外部API加载凭证 ({Config.EXTERNAL_API_URL})")
+                print(f"从外部API加载成功 ({Config.EXTERNAL_API_URL})")
             elif refreshed:
                 print("使用本地凭证登录成功 (已自动刷新)")
             else:
