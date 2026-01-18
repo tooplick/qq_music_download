@@ -19,8 +19,8 @@
 
 ### Clone 到本地
 ```python
-git clone --depth=1 https://github.com/tooplick/qq_music_download
-cd qq_music_download
+git clone --depth=1 https://github.com/tooplick/qq-music-download
+cd qq-music-download
 ```
 ### 安装依赖
 ```python
