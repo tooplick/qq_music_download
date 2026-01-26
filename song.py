@@ -683,7 +683,7 @@ class InteractiveInterface:
     async def run(self):
         """运行交互界面"""
         print("QQ音乐单曲下载")
-        print("版本号: v2.2.0")  # 更新版本号
+        print("版本号: v2.2.1")
 
         # 初始化下载器
         await self.downloader.initialize()
@@ -724,7 +724,10 @@ class InteractiveInterface:
     def _ask_quality_preference(self) -> bool:
         """询问音质偏好"""
         while True:
-            flac_choice = input("你希望下载更高音质吗？(y/n): ").strip().lower()
+            flac_choice = input("你希望下载更高音质吗？(Y/n): ").strip().lower()
+            # 回车直接选择 y
+            if flac_choice == '':
+                flac_choice = 'y'
             if flac_choice in ['y', 'n']:
                 prefer_flac = (flac_choice == 'y')
                 quality_text = "高品质音质 (FLAC优先)" if prefer_flac else "标准音质 (MP3_320优先)"

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "qq-music-download"
-version = "2.2.0"
+version = "2.2.1"
 description = "download music"
 authors = ["tooplick <id6543156918@gmail.com>"]
 license = "GPL-3.0"
@@ -42,7 +42,7 @@ pyzbar = "^0.1.9"
 
 [project]
 name = "qq-music-download"
-version = "2.1.1"
+version = "2.2.1"
 requires-python = ">=3.10"
 
 [build-system]

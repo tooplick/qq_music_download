@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
 QQ音乐凭证管理工具
-功能：登录、检查凭证状态、手动刷新凭证、凭证管理
+功能：登录、检查凭证状态、手动刷新凭证、凭证管理、导出凭证
 """
 
 import asyncio
 import pickle
 import os
+import json
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 from qqmusic_api.login import get_qrcode, check_qrcode, QRLoginType, Credential, QRCodeLoginEvents, check_expired
 
 # 配置
@@ -185,6 +187,50 @@ class CredentialManager:
 
             print(f"{key}: {display_value}")
 
+    def export_credential_to_json(self, output_dir: Path = None) -> bool:
+        """导出凭证信息到JSON文件"""
+        if not self.load_credential():
+            print("未找到凭证，无法导出")
+            return False
+
+        try:
+            # 默认导出到当前目录
+            if output_dir is None:
+                output_dir = Path(".")
+            else:
+                output_dir = Path(output_dir)
+
+            # 确保输出目录存在
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # 生成文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            json_file = output_dir / f"qqmusic_credential_{timestamp}.json"
+
+            # 准备导出数据
+            cred_dict = self.credential.__dict__
+            export_data = {}
+
+            # 转换凭证数据
+            for key, value in cred_dict.items():
+                # 处理不可序列化的对象
+                if isinstance(value, (str, int, float, bool, type(None))):
+                    export_data[key] = value
+                else:
+                    # 尝试转换为字符串
+                    export_data[key] = str(value)
+
+            # 写入JSON文件
+            with open(json_file, 'w', encoding='utf-8') as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+
+            print(f"凭证已成功导出到: {json_file.absolute()}")
+            return True
+
+        except Exception as e:
+            print(f"导出凭证失败: {e}")
+            return False
+
 
 async def main():
     """主函数"""
@@ -219,10 +265,11 @@ async def main():
         print("1. 检查凭证状态")
         print("2. 手动刷新凭证")
         print("3. 显示凭证信息")
-        print("4. 重新登录")
-        print("5. 退出")
+        print("4. 导出凭证到JSON")
+        print("5. 重新登录")
+        print("6. 退出")
 
-        choice = input("\n请输入选项 (1-5): ").strip()
+        choice = input("\n请输入选项 (1-6): ").strip()
 
         if choice == '1':
             await manager.check_status()
@@ -241,6 +288,10 @@ async def main():
             input("\n按回车键继续...")
 
         elif choice == '4':
+            manager.export_credential_to_json()
+            input("\n按回车键继续...")
+
+        elif choice == '5':
             print("\n请选择登录方式:")
             print("1. QQ 二维码")
             print("2. 微信二维码")
@@ -256,7 +307,7 @@ async def main():
             else:
                 print("无效选择")
 
-        elif choice == '5':
+        elif choice == '6':
             print("再见！")
             break
 
