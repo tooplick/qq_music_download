@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "qq-music-download"
-version = "2.2.1"
+version = "2.3.0"
 description = "download music"
 authors = ["tooplick <id6543156918@gmail.com>"]
 license = "GPL-3.0"

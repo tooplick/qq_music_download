@@ -589,7 +589,7 @@ class QQMusicDownloader:
     def __init__(self, download_dir: Path = Config.MUSIC_DIR):
         self.download_dir = FileManager.ensure_directory(download_dir)
         self.credential = None
-        self.prefer_flac = False
+        self.quality_level = 3  # 默认 FLAC 无损
 
         # 初始化组件
         self.network = NetworkManager()
@@ -689,19 +689,38 @@ class QQMusicDownloader:
             album_mid=song_data.get('album', {}).get('mid', '')
         )
 
+    # 音质选项: (显示名称, 降级链)
+    QUALITY_OPTIONS = {
+        1: ("臻品母带 (MASTER, 24Bit 192kHz)", [
+            (SongFileType.MASTER, "臻品母带"),
+            (SongFileType.ATMOS_2, "臻品全景声"),
+            (SongFileType.ATMOS_51, "臻品音质"),
+            (SongFileType.FLAC, "FLAC"),
+            (SongFileType.MP3_320, "MP3 320kbps"),
+            (SongFileType.MP3_128, "MP3 128kbps"),
+        ]),
+        2: ("臻品全景声 (ATMOS, 16Bit 44.1kHz)", [
+            (SongFileType.ATMOS_2, "臻品全景声"),
+            (SongFileType.ATMOS_51, "臻品音质"),
+            (SongFileType.FLAC, "FLAC"),
+            (SongFileType.MP3_320, "MP3 320kbps"),
+            (SongFileType.MP3_128, "MP3 128kbps"),
+        ]),
+        3: ("FLAC 无损 (16Bit~24Bit)", [
+            (SongFileType.FLAC, "FLAC"),
+            (SongFileType.MP3_320, "MP3 320kbps"),
+            (SongFileType.MP3_128, "MP3 128kbps"),
+        ]),
+        4: ("MP3 320kbps", [
+            (SongFileType.MP3_320, "MP3 320kbps"),
+            (SongFileType.MP3_128, "MP3 128kbps"),
+        ]),
+    }
+
     def _get_quality_strategy(self) -> List[Tuple[SongFileType, str]]:
         """获取音质下载策略"""
-        if self.prefer_flac:
-            return [
-                (SongFileType.FLAC, "FLAC"),
-                (SongFileType.MP3_320, "320kbps"),
-                (SongFileType.MP3_128, "128kbps")
-            ]
-        else:
-            return [
-                (SongFileType.MP3_320, "320kbps"),
-                (SongFileType.MP3_128, "128kbps")
-            ]
+        _, fallback_chain = self.QUALITY_OPTIONS.get(self.quality_level, self.QUALITY_OPTIONS[3])
+        return fallback_chain
 
     async def download_single_song(self, song_data: Dict[str, Any],
                                    folder: Path) -> bool:
@@ -831,9 +850,10 @@ class QQMusicDownloader:
         safe_folder_name = self.file_manager.sanitize_filename(Config.FOLDER_NAME.format(user_id=user_id, songlist_name=songlist_name))
         folder = FileManager.ensure_directory(self.download_dir / safe_folder_name)
 
-        quality_info = "FLAC -> MP3_320 -> MP3_128" if self.prefer_flac else "MP3_320 -> MP3_128"
+        quality_name, _ = self.QUALITY_OPTIONS.get(self.quality_level, self.QUALITY_OPTIONS[3])
+        quality_chain = " -> ".join(name for _, name in self._get_quality_strategy())
         print(f"\n开始下载歌单: {songlist_name} (共 {len(songs)} 首歌曲)")
-        print(f"下载音质策略: {quality_info} (自动添加封面歌词)")
+        print(f"下载音质策略: {quality_chain} (自动添加封面歌词)")
         print(f"保存位置: {folder}")
         print("-" * 60)
 
@@ -874,7 +894,7 @@ class InteractiveInterface:
     async def run(self):
         """运行交互界面"""
         print("QQ音乐歌单下载")
-        print("版本号: v2.2.1")
+        print("版本号: v2.3.0")
 
         # 初始化下载器
         await self.downloader.initialize()
@@ -933,7 +953,7 @@ class InteractiveInterface:
     async def _handle_user_session(self, user_id: str):
         """处理用户会话"""
         # 设置音质偏好
-        self.downloader.prefer_flac = self._ask_quality_preference()
+        self.downloader.quality_level = self._ask_quality_preference()
 
         # 获取歌单
         songlists = await self.downloader.get_user_songlists(user_id)
@@ -954,25 +974,30 @@ class InteractiveInterface:
             elif choice.isdigit():
                 await self._handle_single_songlist(songlists, int(choice) - 1, user_id)
 
-    def _ask_quality_preference(self) -> bool:
+    def _ask_quality_preference(self) -> int:
         """询问音质偏好"""
+        print("请选择下载音质:")
+        for key, (name, _) in QQMusicDownloader.QUALITY_OPTIONS.items():
+            print(f"  {key}. {name}")
         while True:
-            flac_choice = input("你希望下载更高音质吗？(Y/n): ").strip().lower()
-            # 回车直接选择 y
-            if flac_choice == '':
-                flac_choice = 'y'
-            if flac_choice in ['y', 'n']:
-                prefer_flac = (flac_choice == 'y')
-                quality_text = "高品质音质 (FLAC优先)" if prefer_flac else "标准音质 (MP3_320优先)"
-                print(f"已选择 {quality_text}")
-                return prefer_flac
-            else:
-                print("请输入 y 或 n")
+            choice = input(f"请输入序号 (1-{len(QQMusicDownloader.QUALITY_OPTIONS)}, 默认3): ").strip()
+            if choice == '':
+                choice = '3'
+            try:
+                choice_num = int(choice)
+                if choice_num in QQMusicDownloader.QUALITY_OPTIONS:
+                    name, _ = QQMusicDownloader.QUALITY_OPTIONS[choice_num]
+                    print(f"已选择: {name}")
+                    return choice_num
+            except ValueError:
+                pass
+            print(f"请输入 1-{len(QQMusicDownloader.QUALITY_OPTIONS)} 之间的数字")
 
     def _show_songlist_menu(self, user_id: str, songlists: List[Dict]) -> str:
         """显示歌单菜单"""
         print(f"\n当前用户: {user_id}")
-        print(f"音质模式: {'高品质 (FLAC优先)' if self.downloader.prefer_flac else '标准 (MP3_320优先)'}")
+        quality_name, _ = QQMusicDownloader.QUALITY_OPTIONS.get(self.downloader.quality_level, QQMusicDownloader.QUALITY_OPTIONS[3])
+        print(f"音质模式: {quality_name}")
         print(f"找到 {len(songlists)} 个歌单:")
 
         for i, sl in enumerate(songlists, 1):
