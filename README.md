@@ -66,22 +66,21 @@ python songlist.py
 
 - `song.py` - 单曲搜索下载
 - `songlist.py` - 歌单下载
-- `credential.py` - 登录与凭证管理（合并了原signin.py和credential.py）
+- `credential.py` - 登录与凭证管理
 - `requirements.txt` - 项目依赖
 - `qqmusic_cred.pkl` - 登录凭证（自动生成）
-- `credential.spec` - 打包 credential.py 的配置文件
-- `windows打包文件` - 见Releases
+- `windows打包文件` - 见Releases（Action自动构建）
 
 ## 音质说明
 
 启动时可选择 4 级音质，每级自动降级：
 
-| 序号 | 音质 | 降级链 |
-|------|------|--------|
-| 1 | 臻品母带 (MASTER, 24Bit 192kHz) | MASTER → ATMOS_2 → ATMOS_51 → FLAC → MP3_320 → MP3_128 |
-| 2 | 臻品全景声 (ATMOS, 16Bit 44.1kHz) | ATMOS_2 → ATMOS_51 → FLAC → MP3_320 → MP3_128 |
-| 3 | FLAC 无损 (16Bit~24Bit) | FLAC → MP3_320 → MP3_128 |
-| 4 | MP3 320kbps | MP3_320 → MP3_128 |
+| 序号 | 音质 |
+|------|------|
+| 1 | 臻品母带 (MASTER, 24Bit 192kHz) |
+| 2 | 臻品全景声 (ATMOS, 16Bit 44.1kHz) |
+| 3 | FLAC 无损 (16Bit~24Bit) |
+| 4 | MP3 320kbps | 
 
 默认选择 3（FLAC 无损）。
 
