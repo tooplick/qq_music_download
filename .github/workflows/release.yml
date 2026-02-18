@@ -26,14 +26,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Install zbar for pyzbar
-        run: |
-          # Download zbar Windows DLL
-          Invoke-WebRequest -Uri "https://sourceforge.net/projects/zbar/files/zbar/0.10/zbar-0.10-setup.exe/download" -OutFile "zbar-setup.exe"
-          Start-Process -FilePath "zbar-setup.exe" -ArgumentList "/S" -Wait
-          # Add zbar to PATH
-          echo "C:\Program Files (x86)\ZBar\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Extract version from tag
         id: version
         run: |
