@@ -26,10 +26,11 @@ cd qq-music-download
 ```python
 pip install -r requirements.txt
 ```
-**或者使用 `pyproject.toml` 安装依赖**
+**使用 `pyproject.toml` 安装依赖**
 ```python
 pip install .
 ```
+**本项目推荐使用 `uv sync` 同步环境**
 ## 使用方法
 
 ### 1. 登录与凭证管理
