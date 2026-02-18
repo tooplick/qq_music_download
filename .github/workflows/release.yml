@@ -52,6 +52,6 @@ jobs:
           Compress-Archive -Path $folder -DestinationPath "songs_download_windows.zip"
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: songs_download_windows.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload ${{ github.event.release.tag_name }} songs_download_windows.zip --clobber
