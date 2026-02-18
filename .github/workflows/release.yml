@@ -1,0 +1,65 @@
+name: Build and Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install zbar for pyzbar
+        run: |
+          # Download zbar Windows DLL
+          Invoke-WebRequest -Uri "https://sourceforge.net/projects/zbar/files/zbar/0.10/zbar-0.10-setup.exe/download" -OutFile "zbar-setup.exe"
+          Start-Process -FilePath "zbar-setup.exe" -ArgumentList "/S" -Wait
+          # Add zbar to PATH
+          echo "C:\Program Files (x86)\ZBar\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          echo "VERSION=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Build executables with PyInstaller
+        run: |
+          pyinstaller specs/song.spec
+          pyinstaller specs/songlist.spec
+          pyinstaller specs/credential.spec
+
+      - name: Organize release folder
+        run: |
+          $folder = "qq-music-download-${{ steps.version.outputs.VERSION }}"
+          New-Item -ItemType Directory -Path $folder -Force
+          Copy-Item "dist\song.exe" -Destination "$folder\"
+          Copy-Item "dist\songlist.exe" -Destination "$folder\"
+          Copy-Item "dist\credential.exe" -Destination "$folder\"
+
+      - name: Create zip archive
+        run: |
+          $folder = "qq-music-download-${{ steps.version.outputs.VERSION }}"
+          Compress-Archive -Path $folder -DestinationPath "songs_download_windows.zip"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: songs_download_windows.zip
