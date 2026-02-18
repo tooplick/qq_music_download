@@ -8,12 +8,11 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Literal, Tuple
 import logging
 import sys
-import os
 from dataclasses import dataclass
 from contextlib import asynccontextmanager
 from datetime import datetime
 
-from qqmusic_api import user, songlist, song
+from qqmusic_api import user, songlist
 from qqmusic_api.song import get_song_urls, SongFileType
 from qqmusic_api.login import Credential, check_expired
 from qqmusic_api.lyric import get_lyric
@@ -418,7 +417,7 @@ class CredentialManager:
                 self.credential_loaded = True
                 return cred
 
-            except Exception as e:
+            except Exception:
                 # 本地文件加载失败，尝试从外部API加载
                 return await self._try_load_from_api()
         
@@ -1037,7 +1036,7 @@ class InteractiveInterface:
                 total_success += success
                 total_failed += failed
 
-        print(f"\n所有歌单下载完成!")
+        print("\n所有歌单下载完成!")
         print(f"总计处理: {len(songlists)} 个歌单")
         print(f"总计下载: {total_success} 首歌曲, 失败: {total_failed} 首")
         print(f"保存位置: {self.downloader.download_dir}")

@@ -6,7 +6,6 @@ QQ音乐凭证管理工具
 
 import asyncio
 import pickle
-import os
 import json
 from pathlib import Path
 from typing import Optional

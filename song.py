@@ -657,7 +657,7 @@ class QQMusicSingleDownloader:
                         print(f"下载成功: ---> {file_path.name}")
                         return True
                     else:
-                        print(f"文件过小，可能下载失败")
+                        print("文件过小，可能下载失败")
                 else:
                     print(f"下载失败，状态码: {response.status}")
 
