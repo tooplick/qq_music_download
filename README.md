@@ -120,6 +120,10 @@ python songlist.py
 ### v2.0.1
 - 初始版本
 
+## 参考项目
+
+- [QQMusicApi](https://github.com/L-1124/QQMusicApi) - QQ音乐API
+
 ## 作者信息
 
 - **作者**：GeQian
