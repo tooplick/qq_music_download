@@ -526,7 +526,6 @@ class DownloadLogger:
         self.successful_downloads.append(log_entry)
 
         # 使用print输出
-        vip_mark = " [VIP]" if song_info.is_vip else ""
         message = f"下载成功: ---> {file_path.name}"
         print(f"  {message}")
 
